@@ -1,0 +1,6 @@
+{
+  "name": "Video Editor AI Assistant",
+  "description": "A web application for editing video segments with AI-powered analysis and chat features. Users can search for videos, manage a workspace of video segments, and interact with an AI to get insights about video content.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
