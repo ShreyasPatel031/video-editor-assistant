@@ -74,7 +74,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = (props) => {
       <div className="mb-4">
         <Button 
             variant="primary" 
-            className="w-full bg-gray-700 hover:bg-gray-600"
+            className="w-full"
             leftIcon={<UploadIcon className="w-4 h-4"/>}
             onClick={() => fileInputRef.current?.click()}
         >
@@ -584,7 +584,7 @@ const App: React.FC = () => {
   }, [activeTabData, userUploadedVideos]);
 
   return (
-    <div className="h-screen w-screen flex bg-gray-900 text-gray-100 fixed inset-0">
+    <div className="h-screen w-screen flex" style={{ background: 'var(--color-bg-primary)', color: 'var(--color-text-primary)', fontFamily: 'Loew, Arial, sans-serif' }}>
       <LeftSidebar 
         globalChatHistory={globalChatHistory}
         onSendGlobalChatMessage={handleSendGlobalChatMessage}
@@ -597,13 +597,13 @@ const App: React.FC = () => {
       
       <main className="flex-1 flex flex-col overflow-hidden">
         {apiKeyStatus === 'missing' && (
-          <div className="bg-yellow-600 text-black p-2 text-center text-xs font-semibold flex items-center justify-center">
+          <div style={{ background: 'var(--color-warning)', color: '#000' }} className="p-2 text-center text-xs font-semibold flex items-center justify-center">
             <WarningIcon className="w-4 h-4 mr-2 text-yellow-900"/>
             Warning: API Key for Gemini is not configured. AI features will use mock data or may not function.
           </div>
         )}
         {apiKeyStatus === 'checking' && (
-          <div className="bg-gray-700 text-white p-2 text-center text-xs font-semibold">
+          <div style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-primary)' }} className="p-2 text-center text-xs font-semibold">
             Checking API Key status...
           </div>
         )}

@@ -22,10 +22,37 @@
         width: 8px;
         height: 8px;
       }
+      :root {
+        --color-bg-primary: #000000;
+        --color-bg-secondary: #101214;
+        --color-primary: #00AFFF;
+        --color-primary-hover: #19B8FF;
+        --color-text-primary: #FFFFFF;
+        --color-text-secondary: #8C8C8E;
+        --color-divider: #4A4A4C;
+        --color-success: #00C48C;
+        --color-warning: #FFB800;
+        --color-error: #FF4D4F;
+      }
+      @font-face {
+        font-family: 'Loew';
+        src: url('/Loew/Loew-Regular.woff2') format('woff2'),
+             url('/Loew/Loew-Regular.woff') format('woff');
+        font-weight: 400;
+        font-style: normal;
+      }
+      @font-face {
+        font-family: 'Loew';
+        src: url('/Loew/Loew-Bold.woff2') format('woff2'),
+             url('/Loew/Loew-Bold.woff') format('woff');
+        font-weight: 700;
+        font-style: normal;
+      }
       body {
         overscroll-behavior: none;
-        background-color: #000000; /* Black background */
-        color: #FFFFFF; /* White text */
+        background: var(--color-bg-primary);
+        color: var(--color-text-primary);
+        font-family: 'Loew', Arial, sans-serif;
       }
     </style>
 <script type="importmap">

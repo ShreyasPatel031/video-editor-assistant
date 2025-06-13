@@ -175,7 +175,7 @@ const TimelineRuler: React.FC<TimelineRulerProps> = ({ duration, pixelsPerSecond
         setMarkers([{time: 0, label: "0s", id: "marker_0"}]); // Show "0s" if duration is 0
         return;
     }
-    const newMarkers = [];
+    const newMarkers: Array<{time: number, label: string, id: string}> = [];
     const seenTimes = new Set<number>(); // Track seen times to prevent duplicates
     
     // Determine step based on duration to avoid too many markers
@@ -537,8 +537,8 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = React.memo((props) =>
   let currentTimelineOffset = 0;
 
   return (
-    <div className="flex flex-col h-full bg-black p-4 space-y-3">
-      <div className="flex-grow rounded-lg bg-gray-950 relative overflow-hidden shadow-2xl border border-gray-800 min-h-[200px] md:min-h-[300px]">
+    <div className="flex flex-col h-full" style={{ background: 'var(--color-bg-primary)' }}>
+      <div className="flex-grow rounded-lg" style={{ background: 'var(--color-bg-secondary)', boxShadow: 'none', border: '1px solid var(--color-divider)' }}>
         {activePreviewSegment ? (
           (() => {
             const sourceVideo = videoSources.find(v => v.id === activePreviewSegment.sourceVideoId);
@@ -624,7 +624,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = React.memo((props) =>
         )}
       </div>
 
-      <div className="flex-shrink-0 bg-gray-950 p-3 rounded-lg shadow-lg border border-gray-800 space-y-2">
+      <div className="flex-shrink-0 p-3 rounded-lg" style={{ background: 'var(--color-bg-secondary)', boxShadow: 'none', border: '1px solid var(--color-divider)' }}>
         <div className="flex items-center justify-between h-8">
           <div className="flex items-center space-x-3">
             <label htmlFor="editWithScriptToggle" className="flex items-center cursor-pointer text-xs text-gray-400 hover:text-gray-200">
@@ -643,7 +643,7 @@ export const WorkspaceView: React.FC<WorkspaceViewProps> = React.memo((props) =>
             </label>
             <span className="text-xs text-gray-500">(Mode: {editWithScript ? 'ON' : 'OFF'})</span>
           </div>
-          <Button onClick={handleSplitClip} variant="ghost" size="sm" title="Split clip at playhead" disabled={memoizedSegments.length === 0} className="text-gray-400 hover:text-white">
+          <Button onClick={handleSplitClip} variant="ghost" size="sm" title="Split clip at playhead" disabled={memoizedSegments.length === 0}>
              <ScissorsIcon className="w-4 h-4 mr-1.5"/> Split
           </Button>
         </div>
