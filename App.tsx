@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { TabDefinition, VideoSource, VideoSegment, ChatMessage, GroundingChunk } from './types';
-import { WORKSPACE_TAB_ID, INITIAL_WORKSPACE_TAB } from './constants';
+import { TabDefinition, VideoSource, VideoSegment, ChatMessage, GroundingChunk } from './src/types';
+import { WORKSPACE_TAB_ID, INITIAL_WORKSPACE_TAB } from './src/constants';
 import { WorkspaceView } from './components/WorkspaceView';
 import { SourceVideoView } from './components/SourceVideoView';
 // MOCK_VIDEO_SOURCES and MOCK_WORKSPACE_SEGMENTS are no longer used for initial state
 // import { MOCK_VIDEO_SOURCES, MOCK_WORKSPACE_SEGMENTS } from './services/mockData';
-import * as GeminiService from './services/geminiService';
-import { SearchIcon, CloseIcon, WorkspaceIcon, VideoIcon, ChatIcon, LinkIcon, WarningIcon, FolderOpenIcon, PlusIcon as UploadIcon, MoreHorizontalIcon, ChevronRightIcon as ViewAllIcon } from './components/Icons'; // Removed RecordIcon
+import * as GeminiService from './src/services/geminiService';
+import { SearchIcon, CloseIcon, WorkspaceIcon, VideoIcon, ChatIcon, LinkIcon, WarningIcon, FolderOpenIcon, PlusIcon as UploadIcon, MoreHorizontalIcon, ChevronRightIcon as ViewAllIcon } from './components/Icons';
 import { Button } from './components/Button';
 import { LoadingSpinner } from './components/LoadingSpinner';
+import { ChatPanel } from './src/components/ChatPanel';
 
 
 // --- Left Sidebar ---
@@ -38,26 +39,7 @@ const LeftSidebar: React.FC<LeftSidebarProps> = (props) => {
     onOpenUploadedVideo,
   } = props;
 
-  const [chatInput, setChatInput] = useState('');
-  const globalChatEndRef = React.useRef<HTMLDivElement>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    globalChatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [globalChatHistory]);
-
-  const handleGlobalSend = (message?: string) => {
-    const textToSend = message || chatInput;
-    if (textToSend.trim()) {
-      onSendGlobalChatMessage(textToSend.trim());
-      if (!message) setChatInput(''); 
-    }
-  };
-  
-  const handleExamplePromptClick = (prompt: typeof EXAMPLE_GLOBAL_PROMPTS[0]) => {
-    setChatInput(prompt.text);
-  };
-
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -70,11 +52,11 @@ const LeftSidebar: React.FC<LeftSidebarProps> = (props) => {
   };
 
   return (
-    <div className="w-80 lg:w-96 bg-gray-950 p-4 flex flex-col border-r border-gray-800 h-full">
-      <div className="mb-4">
+    <div className="w-80 lg:w-96 bg-gray-950 p-0 flex flex-col border-r border-gray-800 h-full">
+      <div className="p-4 pb-0">
         <Button 
             variant="primary" 
-            className="w-full"
+            className="w-full mb-4"
             leftIcon={<UploadIcon className="w-4 h-4"/>}
             onClick={() => fileInputRef.current?.click()}
         >
@@ -90,11 +72,11 @@ const LeftSidebar: React.FC<LeftSidebarProps> = (props) => {
       </div>
 
       {userUploadedVideos.length > 0 && (
-        <div className="mb-4 border-t border-gray-800 pt-4">
+        <div className="mb-4 border-t border-gray-800 pt-4 px-4">
           <div className="flex justify-between items-center mb-2">
             <h3 className="text-sm font-semibold text-gray-200 uppercase tracking-wider">Your Videos</h3>
           </div>
-          <div className="grid grid-cols-3 gap-2.5 max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
+          <div className="grid grid-cols-3 gap-2.5 max-h-60 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900 pr-1">
             {userUploadedVideos.map(video => (
               <div 
                 key={video.id} 
@@ -118,74 +100,17 @@ const LeftSidebar: React.FC<LeftSidebarProps> = (props) => {
         </div>
       )}
       
-      <div className="flex flex-col flex-grow border-t border-gray-800 pt-4 min-h-0">
-        <h3 className="text-sm font-semibold text-gray-200 mb-2 uppercase tracking-wider">Assistant</h3>
-        <div className="flex-grow overflow-y-auto mb-3 pr-1 space-y-3 scrollbar-thin scrollbar-thumb-gray-700 scrollbar-track-gray-900">
-          {globalChatHistory.length === 0 && !isGlobalChatLoading && (
-             <div className="text-xs text-gray-500 py-2">
-                <p className="mb-2">I can help you analyze content or brainstorm ideas. Try asking:</p>
-                <ul className="space-y-1.5">
-                {EXAMPLE_GLOBAL_PROMPTS.map(p => (
-                    <li key={p.id}>
-                        <button 
-                            onClick={() => handleExamplePromptClick(p)}
-                            className="w-full text-left p-2 bg-gray-800 hover:bg-gray-700 rounded-md text-gray-300 hover:text-gray-100 transition-colors text-xs"
-                        >
-                           {p.text}
-                        </button>
-                    </li>
-                ))}
-                </ul>
-             </div>
-          )}
-          {globalChatHistory.map((msg) => (
-            <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-xs lg:max-w-sm px-3 py-2 rounded-lg shadow ${msg.sender === 'user' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-300'}`}>
-                <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-                {msg.sender === 'ai' && msg.timestampLinks && msg.timestampLinks.length > 0 && msg.timestampLinks.some(link => (link as any).uri) && (
-                  <div className="mt-2 pt-2 border-t border-gray-700 space-y-1">
-                    <p className="text-xs text-gray-400 mb-0.5">Sources:</p>
-                    {(msg.timestampLinks as unknown as GroundingChunk[]).map((chunk, idx) => chunk.web && (
-                      <a 
-                        key={idx} 
-                        href={chunk.web.uri} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="block text-xs text-blue-400 hover:text-blue-300 hover:underline truncate"
-                        title={chunk.web.title}
-                      >
-                        <LinkIcon className="w-3 h-3 inline mr-1 opacity-70"/>{chunk.web.title || new URL(chunk.web.uri).hostname}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          {isGlobalChatLoading && (
-             <div className="flex justify-start">
-                 <div className="max-w-xs lg:max-w-sm px-3 py-2 rounded-lg bg-gray-800 text-gray-300">
-                    <LoadingSpinner size="sm" text="Thinking..." className="p-1"/>
-                </div>
-             </div>
-          )}
-          <div ref={globalChatEndRef} />
-        </div>
-        <div className="flex-shrink-0 flex">
-          <input
-            type="text"
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && !isGlobalChatLoading && handleGlobalSend()}
-            placeholder="Ask global AI..."
-            className="flex-grow p-2.5 bg-gray-800 border border-gray-700 rounded-l-md focus:ring-1 focus:ring-gray-500 focus:border-gray-500 outline-none text-sm text-gray-200 placeholder-gray-500"
-            disabled={isGlobalChatLoading}
-          />
-          <Button onClick={() => handleGlobalSend()} variant="primary" className="rounded-l-none px-5" disabled={isGlobalChatLoading || !chatInput.trim()} isLoading={isGlobalChatLoading}>
-            Send
-          </Button>
-        </div>
-      </div>
+      {/* Replace existing chat UI with ChatPanel */}
+      <ChatPanel 
+        className="border-t border-gray-800 flex-grow"
+        chatHistory={globalChatHistory}
+        onSendMessage={onSendGlobalChatMessage}
+        isLoading={isGlobalChatLoading}
+        examplePrompts={EXAMPLE_GLOBAL_PROMPTS}
+        placeholderText="Ask Gemini..."
+        title="Assistant"
+        showTitle={true}
+      />
     </div>
   );
 };
@@ -236,12 +161,21 @@ const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onSelectTab, onClose
   );
 };
 
+// Correct video URLs from test.js
+const CORRECT_VIDEO_SOURCES_DATA = [
+  { id: 'sample2', title: 'GoPro Sample 2', url: 'https://storage.googleapis.com/gopro_videos/sample2.mp4' },
+  { id: 'sample3', title: 'GoPro Sample 3', url: 'https://storage.googleapis.com/gopro_videos/sample3.mp4' },
+  { id: 'sample4', title: 'GoPro Sample 4', url: 'https://storage.googleapis.com/gopro_videos/sample4.mp4' },
+  { id: 'sample5', title: 'GoPro Sample 5', url: 'https://storage.googleapis.com/gopro_videos/sample5.mp4' }
+];
+
 // --- Main App ---
 const App: React.FC = () => {
   const [tabs, setTabs] = useState<TabDefinition[]>([INITIAL_WORKSPACE_TAB]);
   const [activeTabId, setActiveTabId] = useState<string>(WORKSPACE_TAB_ID);
   
-  const [videoSources, setVideoSources] = useState<VideoSource[]>([]); 
+  // videoSources state is not used for initial data, userUploadedVideos is used for sidebar list
+  // const [videoSources, setVideoSources] = useState<VideoSource[]>([]); 
   const [userUploadedVideos, setUserUploadedVideos] = useState<VideoSource[]>([]);
   const [workspaceSegments, setWorkspaceSegments] = useState<VideoSegment[]>([]); 
 
@@ -251,81 +185,44 @@ const App: React.FC = () => {
   const [isVideoChatLoading, setIsVideoChatLoading] = useState<Record<string, boolean>>({});
   const [apiKeyStatus, setApiKeyStatus] = useState<'checking' | 'valid' | 'missing'>('checking');
 
-  // Auto-load videos from public/Video folder
-  useEffect(() => {
-    const loadVideosFromFolder = async () => {
-      const videoFiles = [
-        'videoplayback.mp4',
-        'videoplayback (1).mp4',
-        'videoplayback (2).mp4',
-        'videoplayback (3).mp4',
-        'videoplayback (4).mp4',
-        'videoplayback (5).mp4',
-        'videoplayback (6).mp4',
-        'videoplayback (7).mp4',
-        'videoplayback (8).mp4',
-        'videoplayback (9).mp4',
-        'videoplayback (10).mp4'
-      ];
+  const loadInitialVideos = async () => {
+    try {
+      const videos = CORRECT_VIDEO_SOURCES_DATA.map(video => ({
+        ...video,
+        thumbnailUrl: `https://picsum.photos/seed/${video.id}/160/90`,
+        duration: 0
+      }));
 
-      const loadedVideos: VideoSource[] = [];
-
-      for (const fileName of videoFiles) {
+      // Load durations for each video
+      for (const video of videos) {
         try {
-          const videoUrl = `/Video/${fileName}`;
-          const videoId = `auto_${fileName.replace(/[^a-zA-Z0-9]/g, '_')}`;
-          
-          // Create video element to get duration directly
           const tempVideo = document.createElement('video');
-          tempVideo.src = videoUrl;
-          tempVideo.preload = 'metadata';
-          
-          const videoDuration = await new Promise<number>((resolve) => {
-            const timeoutId = setTimeout(() => {
-              console.log(`[App:loadVideosFromFolder] Timeout loading: ${fileName}`);
-              tempVideo.remove();
-              resolve(0);
-            }, 5000);
-
+          tempVideo.src = video.url;
+          await new Promise((resolve, reject) => {
             tempVideo.onloadedmetadata = () => {
-              clearTimeout(timeoutId);
-              const duration = tempVideo.duration;
-              console.log(`[App:loadVideosFromFolder] Loaded ${fileName}, duration: ${duration}`);
-              tempVideo.remove();
-              resolve(duration);
+              video.duration = tempVideo.duration;
+              console.log(`[App:loadInitialVideos] Got duration for ${video.title}: ${video.duration}`);
+              resolve(null);
             };
-            
-            tempVideo.onerror = () => {
-              clearTimeout(timeoutId);
-              console.log(`[App:loadVideosFromFolder] Error loading: ${fileName}`);
-              tempVideo.remove();
-              resolve(0);
+            tempVideo.onerror = (err) => {
+              console.error(`[App:loadInitialVideos] Error getting duration for: ${video.title}`, err);
+              reject(err);
             };
           });
-
-          if (videoDuration > 0) {
-            const videoSource: VideoSource = {
-              id: videoId,
-              title: fileName.replace('.mp4', ''),
-              url: videoUrl,
-              description: `Auto-loaded video: ${fileName}`,
-              duration: videoDuration,
-              thumbnailUrl: `https://picsum.photos/seed/${videoId}/160/90`
-            };
-
-            loadedVideos.push(videoSource);
-            console.log(`[App:loadVideosFromFolder] Successfully loaded video: ${fileName}`);
-          }
-        } catch (error) {
-          console.log(`[App:loadVideosFromFolder] Could not load video: ${fileName}`, error);
+        } catch (err) {
+          console.error(`[App:loadInitialVideos] Error loading video: ${video.title}`, err);
         }
       }
 
-      console.log(`[App:loadVideosFromFolder] Total videos loaded: ${loadedVideos.length}`);
-      setUserUploadedVideos(loadedVideos);
-    };
+      setUserUploadedVideos(videos);
+      console.log('[App:loadInitialVideos] Initial videos loaded from GCS URLs:', videos);
+    } catch (err) {
+      console.error('[App:loadInitialVideos] Error loading initial videos:', err);
+    }
+  };
 
-    loadVideosFromFolder();
+  useEffect(() => {
+    loadInitialVideos();
   }, []);
 
   useEffect(() => {
@@ -339,9 +236,9 @@ const App: React.FC = () => {
 
   const getVideoTitle = useCallback((videoId?: string): string => {
     if (!videoId) return 'Unknown Video';
-    const allVideos = [...videoSources, ...userUploadedVideos]; 
-    return allVideos.find(v => v.id === videoId)?.title || 'Video Source';
-  }, [videoSources, userUploadedVideos]);
+    // Ensure this uses userUploadedVideos which now holds the GCS videos
+    return userUploadedVideos.find(v => v.id === videoId)?.title || 'Video Source';
+  }, [userUploadedVideos]);
 
 
   const openVideoSourceTab = (video: VideoSource, highlightSegment?: { start: number; end: number }) => {
@@ -464,8 +361,7 @@ const App: React.FC = () => {
   };
 
   const handleDropInWorkspace = async (videoId: string) => {
-    const allVideos = [...videoSources, ...userUploadedVideos]; 
-    const videoToDrop = allVideos.find(v => v.id === videoId);
+    const videoToDrop = userUploadedVideos.find(v => v.id === videoId); // Changed to userUploadedVideos
 
     if (videoToDrop) {
       const segmentDuration = Math.min(10, videoToDrop.duration > 0 ? videoToDrop.duration : 10);
@@ -481,7 +377,7 @@ const App: React.FC = () => {
               tempVideo.currentTime = 0; 
               resolve();
             };
-            tempVideo.onerror = reject;
+            tempVideo.onerror = (err) => reject(err);
           });
           await new Promise<void>((resolve, reject) => {
             tempVideo.onseeked = () => {
@@ -495,7 +391,7 @@ const App: React.FC = () => {
               }
               resolve();
             };
-            tempVideo.onerror = reject;
+            tempVideo.onerror = (err) => reject(err);
           });
           tempVideo.remove();
         } catch (error) {
@@ -514,47 +410,172 @@ const App: React.FC = () => {
   };
 
   const handleSendGlobalChatMessage = async (messageText: string) => {
-    const userMessage: ChatMessage = { id: `user_${Date.now()}`, sender: 'user', text: messageText };
+    const userMessage: ChatMessage = { 
+        id: `user_global_${Date.now()}`, 
+        sender: 'user', 
+        text: messageText
+    };
     setGlobalChatHistory(prev => [...prev, userMessage]);
     setIsGlobalChatLoading(true);
 
-    try {
-        const aiResponse = await GeminiService.generalChat(messageText);
-        setGlobalChatHistory(prev => [...prev, aiResponse]);
-    } catch (error) {
-      console.error("Error in global chat:", error);
-      const errorResponse: ChatMessage = { id: `ai_err_${Date.now()}`, sender: 'ai', text: "Sorry, I encountered an error. Please try again." };
-      setGlobalChatHistory(prev => [...prev, errorResponse]);
-    } finally {
-      setIsGlobalChatLoading(false);
+    const lowerMessageText = messageText.toLowerCase();
+    let videoToAnalyze: VideoSource | undefined = undefined;
+
+    // First check if the message explicitly mentions a video by title
+    for (const video of userUploadedVideos) {
+        if (video.title && lowerMessageText.includes(video.title.toLowerCase())) {
+            videoToAnalyze = video;
+            break;
+        }
     }
-  };
+
+    if (!videoToAnalyze) {
+        const availableVideos = userUploadedVideos.map(v => `"${v.title}"`).join(', ');
+        setGlobalChatHistory(prev => [...prev, {
+            id: `ai_err_novideo_${Date.now()}`,
+            sender: 'ai',
+            text: `Please mention which video you would like me to analyze. Available videos: ${availableVideos}.`
+        }]);
+        setIsGlobalChatLoading(false);
+        return;
+    }
+
+    try {
+        console.log(`[App:handleSendGlobalChatMessage] Analyzing video: ${videoToAnalyze.title} (ID: ${videoToAnalyze.id})`);
+        
+        const loadingMessage: ChatMessage = {
+            id: `ai_loading_${Date.now()}`,
+            sender: 'ai',
+            text: `Analyzing "${videoToAnalyze.title}"... This may take a moment.`
+        };
+        setGlobalChatHistory(prev => [...prev, loadingMessage]);
+
+        const response = await fetch('http://localhost:5000/api/gemini/analyze-video', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                videoUrl: videoToAnalyze.url,
+                messageText: messageText,
+                videoId: videoToAnalyze.id
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Backend API error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // Remove loading message and add AI response
+        setGlobalChatHistory(prev => 
+            prev.filter(msg => msg.id !== loadingMessage.id).concat({
+                id: `ai_${Date.now()}`,
+                sender: 'ai',
+                text: data.text
+            })
+        );
+    } catch (error) {
+        console.error('[App:handleSendGlobalChatMessage] Error:', error);
+        
+        // Remove loading message and add error message
+        setGlobalChatHistory(prev => 
+            prev.filter(msg => msg.id.includes('ai_loading_')).concat({
+                id: `ai_err_${Date.now()}`,
+                sender: 'ai',
+                text: 'There was an issue communicating with the AI service. Please try again.'
+            })
+        );
+    } finally {
+        setIsGlobalChatLoading(false);
+    }
+};
 
   const handleSendVideoChatMessage = async (videoId: string, messageText: string) => {
-    const userMessage: ChatMessage = { id: `user_${videoId}_${Date.now()}`, sender: 'user', text: messageText };
+    const userMessage: ChatMessage = { 
+        id: `user_${videoId}_${Date.now()}`, 
+        sender: 'user', 
+        text: messageText 
+    };
     setVideoChatHistories(prev => ({
-      ...prev,
-      [videoId]: [...(prev[videoId] || []), userMessage]
+        ...prev,
+        [videoId]: [...(prev[videoId] || []), userMessage]
     }));
     setIsVideoChatLoading(prev => ({ ...prev, [videoId]: true }));
 
-    try {
-      const aiResponse = await GeminiService.analyzeVideoContent(videoId, messageText);
-      setVideoChatHistories(prev => ({
-        ...prev,
-        [videoId]: [...(prev[videoId] || []), aiResponse]
-      }));
-    } catch (error) {
-      console.error(`Error in chat for video ${videoId}:`, error);
-      const errorResponse: ChatMessage = { id: `ai_err_${videoId}_${Date.now()}`, sender: 'ai', text: "Sorry, I had trouble analyzing that. Please try again." };
-       setVideoChatHistories(prev => ({
-        ...prev,
-        [videoId]: [...(prev[videoId] || []), errorResponse]
-      }));
-    } finally {
-      setIsVideoChatLoading(prev => ({ ...prev, [videoId]: false }));
+    const currentVideoToAnalyze = userUploadedVideos.find(v => v.id === videoId);
+    if (!currentVideoToAnalyze || !currentVideoToAnalyze.url) {
+        console.error(`[App:handleSendVideoChatMessage] Video or Video URL not found for ID: ${videoId}`);
+        const errorMessage: ChatMessage = {
+            id: `ai_err_novideo_${videoId}_${Date.now()}`,
+            sender: 'ai',
+            text: "Sorry, I couldn't find the video data to analyze. Please ensure the video is loaded correctly."
+        };
+        setVideoChatHistories(prev => ({
+            ...prev,
+            [videoId]: [...(prev[videoId] || []), errorMessage]
+        }));
+        setIsVideoChatLoading(prev => ({ ...prev, [videoId]: false }));
+        return;
     }
-  };
+
+    try {
+        console.log(`[App:handleSendVideoChatMessage] Analyzing video: ${currentVideoToAnalyze.title} (ID: ${videoId})`);
+        
+        const loadingMessage: ChatMessage = {
+            id: `ai_loading_${videoId}_${Date.now()}`,
+            sender: 'ai',
+            text: 'Analyzing the video... This may take a moment.'
+        };
+        setVideoChatHistories(prev => ({
+            ...prev,
+            [videoId]: [...(prev[videoId] || []), loadingMessage]
+        }));
+
+        const response = await fetch('http://localhost:5000/api/gemini/analyze-video', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                videoUrl: currentVideoToAnalyze.url,
+                messageText: messageText,
+                videoId: videoId
+            })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Backend API error: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+        
+        // Remove loading message and add AI response
+        setVideoChatHistories(prev => ({
+            ...prev,
+            [videoId]: [...(prev[videoId] || []).filter(msg => msg.id !== loadingMessage.id), {
+                id: `ai_${videoId}_${Date.now()}`,
+                sender: 'ai',
+                text: data.text
+            }]
+        }));
+    } catch (error) {
+        console.error('[App:handleSendVideoChatMessage] Error:', error);
+        
+        // Remove loading message and add error message
+        setVideoChatHistories(prev => ({
+            ...prev,
+            [videoId]: [...(prev[videoId] || []).filter(msg => !msg.id.includes('ai_loading_')), {
+                id: `ai_err_${videoId}_${Date.now()}`,
+                sender: 'ai',
+                text: 'There was an issue communicating with the AI service. Please try again.'
+            }]
+        }));
+    } finally {
+        setIsVideoChatLoading(prev => ({ ...prev, [videoId]: false }));
+    }
+};
   
   const handleVideoDurationKnown = useCallback((videoId: string, newDuration: number) => {
     setUserUploadedVideos(prevVideos => {
@@ -644,8 +665,9 @@ const App: React.FC = () => {
               chatHistory={videoChatHistories[activeVideo.id] || []}
               onSendMessage={(messageText: string) => handleSendVideoChatMessage(activeVideo.id, messageText)}
               onTimestampClick={(time: number) => {
-                // Handle timestamp click - could set video current time
-                console.log(`Timestamp clicked: ${time}`);
+                console.log(`[App] Timestamp clicked in SourceVideoView: ${time} for video ${activeVideo.title}`);
+                // The actual seeking is handled within SourceVideoView.tsx by its handleTimestampClickInternal function.
+                // App.tsx is just being notified here.
               }}
               isLoading={!!isVideoChatLoading[activeVideo.id]}
             />

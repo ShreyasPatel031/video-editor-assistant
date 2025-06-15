@@ -1,11 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { VideoSegment, VideoSource } from '../types';
+import { VideoSegment, VideoSource } from '../src/types';
 import { 
     PlayIcon, VideoIcon, CloseIcon, FolderOpenIcon, 
     PauseIcon as ActualPauseIcon, ScissorsIcon, ScriptIcon, RewindIcon, FastForwardIcon, ZoomInIcon, ZoomOutIcon 
 } from './Icons';
-import { formatTime } from '../services/geminiService';
 import { Button } from './Button';
+
+// Define formatTime utility function here
+const formatTime = (totalSeconds: number): string => {
+  if (isNaN(totalSeconds) || totalSeconds < 0) totalSeconds = 0;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const milliseconds = Math.floor((totalSeconds % 1) * 1000);
+
+  if (minutes > 0) {
+    return `${minutes}m${seconds < 10 && minutes > 0 ? '0' : ''}${seconds}s`;
+  } else if (seconds > 0) {
+    return `${seconds}s`;
+  } else {
+    // For very short durations, show milliseconds if seconds are 0
+    return `${totalSeconds.toFixed(1)}s`; 
+  }
+};
 
 const PauseIcon: React.FC<{className?: string}> = ActualPauseIcon;
 

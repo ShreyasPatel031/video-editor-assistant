@@ -1,110 +1,31 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { VideoSource, ChatMessage, VideoSegment } from '../types';
-import { analyzeVideoContent, formatTime } from '../services/geminiService';
-import { ChatIcon, PlayIcon, PauseIcon as ActualPauseIcon, PlusIcon, TimestampIcon, LinkIcon, WarningIcon, ChevronLeftIcon, ChevronRightIcon, CheckIcon } from './Icons'; // Added CheckIcon
+import { VideoSource, VideoSegment, GroundingChunk, ChatMessage } from '../src/types';
+import { ChatIcon, PlayIcon, PauseIcon as ActualPauseIcon, PlusIcon, TimestampIcon, LinkIcon, WarningIcon, ChevronLeftIcon, ChevronRightIcon, CheckIcon } from './Icons';
 import { Button } from './Button';
 import { LoadingSpinner } from './LoadingSpinner';
+import { ChatPanel as ReusableChatPanel } from '../src/components/ChatPanel';
+
+// Define formatTime utility function here, making it available to VideoPlayer
+const formatTime = (totalSeconds: number): string => {
+  if (isNaN(totalSeconds) || totalSeconds < 0) totalSeconds = 0;
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  // const milliseconds = Math.floor((totalSeconds % 1) * 1000); // Not typically shown in m:ss format
+
+  const paddedSeconds = seconds < 10 ? `0${seconds}` : seconds;
+
+  return `${minutes}:${paddedSeconds}`;
+  // More detailed example if needed for other contexts:
+  // if (minutes > 0) {
+  //   return `${minutes}m${seconds < 10 && minutes > 0 ? '0' : ''}${seconds}s`;
+  // } else if (seconds > 0) {
+  //   return `${seconds}s`;
+  // } else {
+  //   return `${totalSeconds.toFixed(1)}s`; 
+  // }
+};
 
 const PauseIcon: React.FC<{className?: string}> = ActualPauseIcon;
-
-
-interface ChatPanelProps {
-  videoId: string;
-  videoTitle: string;
-  videoDuration: number;
-  chatHistory: ChatMessage[];
-  onSendMessage: (messageText: string) => Promise<void>;
-  onTimestampClick: (time: number) => void;
-  onAddSegmentToWorkspace: (sourceVideoId: string, sourceVideoTitle: string, segmentTimes: { startTime: number; endTime: number }, thumbnailUrl: string) => Promise<void>;
-  isLoading: boolean;
-}
-
-const ChatPanel: React.FC<ChatPanelProps> = ({ videoId, videoTitle, videoDuration, chatHistory, onSendMessage, onTimestampClick, onAddSegmentToWorkspace, isLoading }) => {
-  const [newMessage, setNewMessage] = useState('');
-  const chatEndRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory]);
-
-  const handleSend = () => {
-    if (newMessage.trim()) {
-      onSendMessage(newMessage.trim());
-      setNewMessage('');
-    }
-  };
-  
-  const handleQuickAdd = async (startTime: number) => {
-    const endTime = Math.min(startTime + 5, videoDuration > 0 ? videoDuration : startTime + 5);
-    const placeholderThumbnail = `https://picsum.photos/seed/quickadd_${videoId}_${startTime}/150/90`;
-    onAddSegmentToWorkspace(videoId, videoTitle, { startTime, endTime }, placeholderThumbnail);
-  };
-
-
-  return (
-    <div className="bg-gray-950 flex flex-col h-full p-3 border-t border-gray-800">
-      <h3 className="text-md font-semibold text-gray-300 mb-3 flex items-center border-b border-gray-800 pb-2">
-        <ChatIcon className="mr-2 w-5 h-5" /> AI Chat: <span className="text-gray-400 ml-1.5 truncate">{videoTitle}</span>
-      </h3>
-      <div className="flex-grow overflow-y-auto mb-3 pr-1 space-y-3 scrollbar-thin scrollbar-thumb-gray-600 scrollbar-track-gray-800">
-        {chatHistory.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-md lg:max-w-lg px-3.5 py-2.5 rounded-lg shadow ${msg.sender === 'user' ? 'bg-gray-700 text-white' : 'bg-gray-800 text-gray-300'}`}>
-              <p className="text-sm whitespace-pre-wrap">{msg.text}</p>
-              {msg.timestampLinks && msg.timestampLinks.length > 0 && (
-                <div className="mt-2.5 space-y-1.5">
-                  {msg.timestampLinks.map((link, index) => (
-                    <div key={index} className="flex items-center justify-between text-xs bg-gray-700 p-2 rounded shadow-sm">
-                      <button
-                        onClick={() => onTimestampClick(link.time)}
-                        className="flex items-center text-gray-300 hover:text-white hover:underline"
-                        title={`Jump to ${formatTime(link.time)}`}
-                      >
-                        <TimestampIcon className="w-3.5 h-3.5 mr-1.5" />
-                        {link.text}
-                      </button>
-                       <Button 
-                        size="sm" 
-                        variant="ghost"
-                        className="p-1 text-xs ml-2"
-                        onClick={() => handleQuickAdd(link.time) }
-                        title="Add ~5s segment from this timestamp to workspace"
-                       >
-                         <PlusIcon className="w-3.5 h-3.5"/>
-                       </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        ))}
-        {isLoading && (
-          <div className="flex justify-start">
-             <div className="max-w-md lg:max-w-lg px-3.5 py-2.5 rounded-lg bg-gray-800 text-gray-300">
-                <LoadingSpinner size="sm" text="AI is thinking..." />
-            </div>
-          </div>
-        )}
-        <div ref={chatEndRef} />
-      </div>
-      <div className="flex-shrink-0 flex mt-1">
-        <input
-          type="text"
-          value={newMessage}
-          onChange={(e) => setNewMessage(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
-          placeholder="Ask about this video..."
-          className="flex-grow p-2.5 bg-gray-800 border border-gray-700 rounded-l-md focus:ring-1 focus:ring-gray-500 focus:border-gray-500 outline-none text-sm placeholder-gray-500"
-          disabled={isLoading}
-        />
-        <Button onClick={handleSend} variant="primary" className="rounded-l-none px-5" disabled={isLoading || !newMessage.trim()} isLoading={isLoading}>
-          Send
-        </Button>
-      </div>
-    </div>
-  );
-};
 
 interface VideoPlayerProps {
   video: VideoSource;
@@ -136,8 +57,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const currentUrl = video.url;
     const isBlob = currentUrl?.startsWith('blob:');
     return () => {
-      if (isBlob) {
-        // console.log(`[VideoPlayer:cleanup] Revoking object URL: ${currentUrl} for video ID: ${video.id}`);
+      if (isBlob && currentUrl) {
         URL.revokeObjectURL(currentUrl);
       }
     };
@@ -196,9 +116,8 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.removeEventListener('pause', handlePauseEvent);
       videoRef.current.removeEventListener('ended', handleEndedEvent);
     };
-  }, [onDurationKnown, onTimeUpdate, isPlaying, onPlayPauseToggle, actualVideoDuration]);
+  }, [onDurationKnown, onTimeUpdate, isPlaying, onPlayPauseToggle, actualVideoDuration, videoRef]);
 
-  // Handle play/pause state changes
   useEffect(() => {
     const videoElement = videoRef.current;
     if (!videoElement) return;
@@ -208,9 +127,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     } else {
       videoElement.pause();
     }
-  }, [isPlaying]);
-
-
+  }, [isPlaying, videoRef]);
 
   const handleTimelineClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!timelineRef.current || !actualVideoDuration) return;
@@ -221,7 +138,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       videoRef.current.currentTime = newTime;
       onTimeUpdate(newTime);
     }
-  }, [actualVideoDuration, onTimeUpdate]);
+  }, [actualVideoDuration, onTimeUpdate, videoRef]);
 
   const handleMarkerDragStart = useCallback((type: 'start' | 'end') => {
     setDraggingMarker(type);
@@ -294,7 +211,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   }}
                 />
               )}
-              {/* Selected segment highlight area */}
               <div
                 className="absolute h-full bg-gray-500/20 border-l border-r border-gray-400"
                 style={{
@@ -304,7 +220,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 title={`Selected: ${formatTime(selectedStartTime)} - ${formatTime(selectedEndTime)}`}
               />
               
-              {/* Start marker with left arrow */}
               <div
                 className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full cursor-ew-resize border border-gray-400 shadow hover:bg-gray-100 transition-colors flex items-center justify-center"
                 style={{ left: `${(selectedStartTime / actualVideoDuration) * 100}%`, marginLeft: '-8px' }}
@@ -314,7 +229,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <div className="w-0 h-0 border-t-[3px] border-b-[3px] border-r-[4px] border-transparent border-r-gray-600"></div>
               </div>
               
-              {/* End marker with right arrow */}
               <div
                 className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full cursor-ew-resize border border-gray-400 shadow hover:bg-gray-100 transition-colors flex items-center justify-center"
                 style={{ left: `${(selectedEndTime / actualVideoDuration) * 100}%`, marginLeft: '-8px' }}
@@ -394,6 +308,12 @@ interface SourceVideoViewProps {
   isLoading: boolean;
 }
 
+const exampleVideoPrompts = [
+  { id: 'vid_q1', text: "What is the main subject of this video?", action: 'chat' },
+  { id: 'vid_q2', text: "Are there any people visible?", action: 'chat' },
+  { id: 'vid_q3', text: "Describe the key actions in the first 10 seconds.", action: 'chat' },
+];
+
 export const SourceVideoView: React.FC<SourceVideoViewProps> = ({
   video,
   chatHistory,
@@ -404,156 +324,153 @@ export const SourceVideoView: React.FC<SourceVideoViewProps> = ({
   highlightSegment,
   isLoading,
 }) => {
+  const videoPlayerRef = useRef<HTMLVideoElement | null>(null);
   const [currentTime, setCurrentTime] = useState(0);
-  const [videoDuration, setVideoDuration] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [selectedStartTime, setSelectedStartTime] = useState(0);
   const [selectedEndTime, setSelectedEndTime] = useState(10);
-  const [isPlaying, setIsPlaying] = useState(false);
   const [segmentAddStatus, setSegmentAddStatus] = useState<'idle' | 'adding' | 'added' | 'error'>('idle');
-  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [actualVideoDuration, setActualVideoDuration] = useState(video.duration > 0 ? video.duration : 0);
 
-  // Update selectedEndTime when video duration is known
   useEffect(() => {
-    if (videoDuration > 0 && selectedEndTime > videoDuration) {
-      setSelectedEndTime(Math.min(10, videoDuration));
+    if (video.duration) {
+      setActualVideoDuration(video.duration);
+      const defaultEndTime = Math.min(10, video.duration);
+      if (selectedEndTime > video.duration || (selectedEndTime === 10 && defaultEndTime < 10) || selectedEndTime === 0 && defaultEndTime > 0) {
+        setSelectedEndTime(defaultEndTime);
+      }
+      if (selectedStartTime >= video.duration || selectedStartTime > defaultEndTime ) {
+        setSelectedStartTime(Math.max(0, video.duration - defaultEndTime));
+      }
+    } else {
+        // If video duration is 0 initially, set a sensible default for selection
+        setSelectedStartTime(0);
+        setSelectedEndTime(10);
     }
-  }, [videoDuration, selectedEndTime]);
+    // Reset current time when video changes
+    setCurrentTime(0);
+    setIsPlaying(false);
+  }, [video.id, video.duration]); // Depend on video.id to reset for new videos
+
+  useEffect(() => {
+    if (highlightSegment) {
+      setSelectedStartTime(highlightSegment.start);
+      setSelectedEndTime(highlightSegment.end);
+      if (videoPlayerRef.current) {
+        videoPlayerRef.current.currentTime = highlightSegment.start;
+        setCurrentTime(highlightSegment.start);
+      }
+    }
+  }, [highlightSegment]);
+  
+  const handleDurationKnown = useCallback((duration: number) => {
+    if (duration > 0 && Math.abs(actualVideoDuration - duration) > 0.001) {
+        setActualVideoDuration(duration);
+        if (selectedStartTime >= duration) setSelectedStartTime(Math.max(0, duration - Math.min(10, duration)));
+        if (selectedEndTime === 0 || selectedEndTime > duration) setSelectedEndTime(duration); // if initial selectedEndtime was based on 0 duration
+    }
+  }, [actualVideoDuration, selectedStartTime, selectedEndTime]);
+
+  const handleTimeUpdate = (time: number) => {
+    setCurrentTime(time);
+  };
+
+  const handlePlayPauseToggle = () => {
+    setIsPlaying(prev => !prev);
+  };
 
   const handleSelectedTimeChange = (type: 'start' | 'end', time: number) => {
     if (type === 'start') {
-      setSelectedStartTime(Math.min(time, selectedEndTime - 0.1));
+      setSelectedStartTime(Math.max(0, Math.min(time, selectedEndTime - 0.1)));
     } else {
-      setSelectedEndTime(Math.max(time, selectedStartTime + 0.1));
+      setSelectedEndTime(Math.min(actualVideoDuration || Infinity, Math.max(time, selectedStartTime + 0.1)));
     }
   };
 
-  const handleAddSegment = async () => {
-    if (selectedStartTime >= selectedEndTime) return;
+  const handleAddCurrentSegmentToWorkspace = async () => {
+    if (!videoPlayerRef.current) return;
+    if (selectedStartTime >= selectedEndTime) {
+      console.warn("[SourceVideoView] Invalid segment: start time is greater than or equal to end time.");
+      return;
+    }
     setSegmentAddStatus('adding');
-    console.log(`[SourceVideoView] Starting to add segment: ${formatTime(selectedStartTime)} - ${formatTime(selectedEndTime)} from "${video.title}"`);
-    
     try {
-      // Generate thumbnail from video frame at start time
-      let thumbnailUrl = `https://picsum.photos/seed/${video.id}_${selectedStartTime}/150/90`;
+      const canvas = document.createElement('canvas');
+      canvas.width = 160;
+      const aspectRatio = videoPlayerRef.current.videoWidth > 0 ? videoPlayerRef.current.videoHeight / videoPlayerRef.current.videoWidth : 9/16;
+      canvas.height = Math.round(aspectRatio * 160);
+      if (canvas.height === 0) canvas.height = 90; // Fallback height
       
-      if (videoRef.current) {
-        try {
-          console.log(`[SourceVideoView] Generating thumbnail at time ${selectedStartTime}s for segment`);
-          
-          // Create a canvas to capture the video frame
-          const canvas = document.createElement('canvas');
-          const ctx = canvas.getContext('2d');
-          
-          if (ctx) {
-            // Set canvas dimensions
-            canvas.width = 150;
-            canvas.height = Math.round((videoRef.current.videoHeight / videoRef.current.videoWidth) * 150) || 90;
-            
-            // Store current video time to restore later
-            const originalTime = videoRef.current.currentTime;
-            
-            // Create a temporary video element to avoid disrupting playback
-            const tempVideo = document.createElement('video');
-            tempVideo.crossOrigin = "anonymous";
-            tempVideo.src = video.url;
-            tempVideo.muted = true;
-            
-            // Wait for metadata to load
-            await new Promise<void>((resolve, reject) => {
-              tempVideo.onloadedmetadata = () => {
-                tempVideo.currentTime = selectedStartTime;
-                resolve();
-              };
-              tempVideo.onerror = reject;
-              setTimeout(() => reject(new Error('Timeout loading video metadata')), 5000);
-            });
-            
-            // Wait for seeking to complete
-            await new Promise<void>((resolve, reject) => {
-              tempVideo.onseeked = () => {
-                try {
-                  // Draw the video frame to canvas
-                  ctx.drawImage(tempVideo, 0, 0, canvas.width, canvas.height);
-                  thumbnailUrl = canvas.toDataURL('image/jpeg', 0.8);
-                  console.log(`[SourceVideoView] Generated thumbnail from video frame at ${selectedStartTime}s`);
-                  resolve();
-                } catch (error) {
-                  console.error('[SourceVideoView] Error drawing video frame to canvas:', error);
-                  reject(error);
-                }
-              };
-              tempVideo.onerror = reject;
-              setTimeout(() => reject(new Error('Timeout seeking video')), 3000);
-            });
-            
-            // Clean up
-            tempVideo.remove();
-          }
-        } catch (error) {
-          console.error('[SourceVideoView] Error generating thumbnail from video frame:', error);
-          console.log('[SourceVideoView] Falling back to placeholder thumbnail');
-        }
+      const ctx = canvas.getContext('2d');
+      let thumbnailUrl = `https://picsum.photos/seed/thumb_${video.id}_${Date.now()}/160/90`;
+      
+      if (ctx && videoPlayerRef.current.videoWidth > 0 && videoPlayerRef.current.videoHeight > 0) {
+        const tempVideoTime = videoPlayerRef.current.currentTime;
+        videoPlayerRef.current.currentTime = selectedStartTime;
+        // Await a brief moment for the frame to update after setting currentTime
+        await new Promise(r => setTimeout(r, 200)); 
+        ctx.drawImage(videoPlayerRef.current, 0, 0, canvas.width, canvas.height);
+        thumbnailUrl = canvas.toDataURL('image/jpeg', 0.85);
+        videoPlayerRef.current.currentTime = tempVideoTime; // Restore video time
+      } else {
+        console.warn("[SourceVideoView] Could not generate thumbnail from video frame (video dimensions might be 0).");
       }
       
-      console.log(`[SourceVideoView] Adding segment to workspace with thumbnail URL:`, thumbnailUrl.substring(0, 50) + '...');
-      
-      await onAddSegmentToWorkspace(
-        video.id,
-        video.title,
-        { startTime: selectedStartTime, endTime: selectedEndTime },
-        thumbnailUrl
-      );
+      await onAddSegmentToWorkspace(video.id, video.title, { startTime: selectedStartTime, endTime: selectedEndTime }, thumbnailUrl);
       setSegmentAddStatus('added');
-      console.log(`✅ [SourceVideoView] Successfully added segment: ${formatTime(selectedStartTime)} - ${formatTime(selectedEndTime)} from "${video.title}"`);
-      
-      // Reset to next potential segment automatically
-      const segmentDuration = selectedEndTime - selectedStartTime;
-      setSelectedStartTime(selectedEndTime);
-      setSelectedEndTime(Math.min(selectedEndTime + segmentDuration, videoDuration));
-      
-      setTimeout(() => setSegmentAddStatus('idle'), 3000);
+      setTimeout(() => setSegmentAddStatus('idle'), 2000);
     } catch (error) {
-      console.error('[SourceVideoView] Failed to add segment:', error);
+      console.error("[SourceVideoView] Error adding segment:", error);
       setSegmentAddStatus('error');
-      setTimeout(() => setSegmentAddStatus('idle'), 3000);
+      setTimeout(() => setSegmentAddStatus('idle'), 2000);
     }
   };
 
-  const handleTimestampClick = (time: number) => {
-    setCurrentTime(time);
-    onTimestampClick(time);
+  const handleTimestampClickInternal = (time: number) => {
+    if (videoPlayerRef.current) {
+      videoPlayerRef.current.currentTime = time;
+      setCurrentTime(time);
+      setIsPlaying(true); // Optionally auto-play
+    }
+    onTimestampClick(time); // Propagate to App
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex-grow min-h-0">
-        <VideoPlayer
-          video={video}
-          currentTime={currentTime}
-          onTimeUpdate={setCurrentTime}
-          onDurationKnown={setVideoDuration}
-          workspaceSegments={workspaceSegments}
-          highlightSegment={highlightSegment}
-          selectedStartTime={selectedStartTime}
-          selectedEndTime={selectedEndTime}
-          onSelectedTimeChange={handleSelectedTimeChange}
-          onAddSegmentToWorkspace={handleAddSegment}
-          isPlaying={isPlaying}
-          onPlayPauseToggle={() => setIsPlaying(!isPlaying)}
-          segmentAddStatus={segmentAddStatus}
-          videoRef={videoRef}
-        />
+    <div className="flex h-full bg-gray-900"> {/* Main flex container: video player and chat side-by-side */}
+      {/* VideoPlayer component takes up the main space */}
+      <div className="flex-grow flex flex-col p-0 overflow-y-auto"> {/* Video player area, p-0 to ensure player fills space */}
+        <div className="flex-grow relative">
+          <VideoPlayer 
+            video={video}
+            currentTime={currentTime}
+            onTimeUpdate={handleTimeUpdate}
+            onDurationKnown={handleDurationKnown}
+            workspaceSegments={workspaceSegments}
+            highlightSegment={highlightSegment}
+            selectedStartTime={selectedStartTime}
+            selectedEndTime={selectedEndTime}
+            onSelectedTimeChange={handleSelectedTimeChange}
+            onAddSegmentToWorkspace={handleAddCurrentSegmentToWorkspace}
+            isPlaying={isPlaying}
+            onPlayPauseToggle={handlePlayPauseToggle}
+            segmentAddStatus={segmentAddStatus}
+            videoRef={videoPlayerRef} 
+          />
+        </div>
       </div>
-      <div className="h-1/3 min-h-[200px]">
-        <ChatPanel
-          videoId={video.id}
-          videoTitle={video.title}
-          videoDuration={videoDuration}
+      
+      {/* ChatPanel on the right side */}
+      <div className="w-96 lg:w-[450px] flex-shrink-0 border-l border-gray-800 flex flex-col">
+        <ReusableChatPanel 
           chatHistory={chatHistory}
           onSendMessage={onSendMessage}
-          onTimestampClick={handleTimestampClick}
-          onAddSegmentToWorkspace={onAddSegmentToWorkspace}
           isLoading={isLoading}
+          title={`AI Chat: ${video.title}`}
+          placeholderText={`Ask about ${video.title}...`}
+          examplePrompts={exampleVideoPrompts}
+          onTimestampClick={handleTimestampClickInternal} // Pass the internal handler
+          showTitle={true}
+          className="flex-grow" // Make chat panel fill height
         />
       </div>
     </div>

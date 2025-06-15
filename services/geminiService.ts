@@ -3,6 +3,7 @@
 // import { GoogleGenAI, GenerateContentResponse, Chat } from "@google/genai";
 import { ChatMessage, GroundingChunk } from '../types';
 import { GEMINI_TEXT_MODEL } from '../constants';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, Part } from '@google/generative-ai';
 
 // const API_KEY = process.env.API_KEY;
 // if (!API_KEY) {
@@ -10,55 +11,153 @@ import { GEMINI_TEXT_MODEL } from '../constants';
 // }
 // const ai = new GoogleGenAI({ apiKey: API_KEY! });
 
-const simulateApiCall = <T,>(data: T, delay: number = 500): Promise<T> => {
-  return new Promise(resolve => setTimeout(() => resolve(data), delay));
-};
+// API Configuration
+const GEMINI_API_KEY = 'AIzaSyAKvr1pQOWZyZq8bCE5a1Bc1qBzDNo-5bw';
+const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+const MODEL = 'gemini-2.0-flash';
 
-export const analyzeVideoContent = async (videoId: string, question: string): Promise<ChatMessage> => {
-  console.log(`[Mock Gemini] Analyzing video "${videoId}" for question: "${question}" using ${GEMINI_TEXT_MODEL}`);
-  
-  let text = `Regarding your video, your question was: "${question}". `;
-  const timestampLinks: Array<{ text: string; time: number }> = [];
+// Store conversation context per videoId
+const videoConversationContexts: Record<string, string> = {};
 
-  if (question.toLowerCase().includes("timestamp") || question.toLowerCase().includes("at what time")) {
-    const time1 = Math.floor(Math.random() * 60);
-    const time2 = Math.floor(Math.random() * 60);
-    text += `I found a relevant moment around ${formatTime(time1)}. There's also something interesting at ${formatTime(time2)}.`;
-    timestampLinks.push({ text: `See moment at ${formatTime(time1)}`, time: time1 });
-    timestampLinks.push({ text: `Check this part at ${formatTime(time2)}`, time: time2 });
-  } else if (question.toLowerCase().includes("summary")) {
-    text += `This video appears to contain interesting content. I can help analyze specific segments or answer questions about what you're seeing.`;
-  } else {
-    text += "I've processed your query. I can help you find specific moments in your video or analyze the content you're working with.";
-  }
+// Function to fetch and encode video data - using the working implementation from test.js
+async function getVideoData(url: string): Promise<string> {
+    console.log(`[geminiService.getVideoData] Attempting to fetch video from URL: ${url}`);
+    try {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`Failed to fetch video: ${response.statusText}`);
+        }
+        const blob = await response.blob();
+        console.log(`[geminiService.getVideoData] Video fetched successfully. Blob size: ${blob.size}, type: ${blob.type}`);
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                if (typeof reader.result === 'string') {
+                    const base64data = reader.result.split(',')[1];
+                    resolve(base64data);
+                } else {
+                    reject(new Error('Failed to read video data as string'));
+                }
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+        });
+    } catch (error) {
+        console.error('Error fetching video:', error);
+        throw error;
+    }
+}
 
-  const aiResponse: ChatMessage = {
-    id: `ai_msg_${Date.now()}`,
+// Main analysis function that integrates with the existing chat system
+export async function analyzeVideoContent(
+    videoId: string,
+    messageText: string,
+    videoUrl: string
+): Promise<ChatMessage> {
+    try {
+        console.log('[geminiService] Starting video analysis...');
+        console.log('[geminiService] Video URL:', videoUrl);
+        console.log('[geminiService] Message:', messageText);
+        
+        const videoData = await getVideoData(videoUrl);
+        console.log('[geminiService] Video data fetched successfully');
+
+        const model = genAI.getGenerativeModel({ 
+            model: MODEL,
+            safetySettings: [
+                { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+                { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+                { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+                { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+            ],
+        });
+        
+        // Initialize or get conversation context for this video
+        if (!videoConversationContexts[videoId]) {
+            videoConversationContexts[videoId] = '';
+        }
+        
+        // Update conversation context with user's message
+        videoConversationContexts[videoId] += `\nUser: ${messageText}`;
+        
+        const prompt = `
+You are having a conversation about a video. You will receive a video [VIDEO_1].
+
+Previous conversation context:
+${videoConversationContexts[videoId]}
+
+Please analyze the video and respond to the latest message. Keep your response natural and conversational.
+If the user asks about specific timestamps or segments, include them in your response.
+`;
+
+        console.log('[geminiService] Sending request to Gemini...');
+        const result = await model.generateContent([
+            { text: prompt },
+            { text: '[VIDEO_1]' },
+            { 
+                inlineData: {
+                    mimeType: 'video/mp4',
+                    data: videoData
+                }
+            }
+        ]);
+
+        const response = await result.response;
+        const responseText = response.text();
+        
+        // Update conversation context with AI's response
+        videoConversationContexts[videoId] += `\nAssistant: ${responseText}`;
+        
+        console.log('[geminiService] Received response from Gemini');
+        
+        // Format the response as a ChatMessage
+        return {
+            id: `ai_${videoId}_${Date.now()}`,
     sender: 'ai',
-    text: text,
-    timestampLinks: timestampLinks,
-  };
-  return simulateApiCall(aiResponse, 1200);
-};
+            text: responseText,
+            timestamp: Date.now(),
+        };
+        
+    } catch (err) {
+        console.error('[geminiService] Error during video analysis:', err);
+        if (err.response) {
+            console.error('[geminiService] Response text:', err.response.text());
+        }
+        throw err;
+    }
+}
 
+// Reset conversation context for a specific video
+export function resetConversation(videoId?: string) {
+    if (videoId) {
+        delete videoConversationContexts[videoId];
+    } else {
+        Object.keys(videoConversationContexts).forEach(key => {
+            delete videoConversationContexts[key];
+        });
+    }
+}
+
+// Keep the general chat function for non-video queries
 export const generalChat = async (query: string): Promise<ChatMessage> => {
-  console.log(`[Mock Gemini] General chat query: "${query}" using ${GEMINI_TEXT_MODEL}`);
-  let text = `You asked: "${query}". `;
-  if (query.toLowerCase().includes("help") || query.toLowerCase().includes("how to")) {
-    text += "I can help you analyze video content or answer questions about video editing. Try opening a video and asking questions about it, or ask me about video editing concepts.";
-  } else if (query.toLowerCase().includes("video editing") || query.toLowerCase().includes("editing")) {
-    text += "Video editing involves selecting segments, arranging them in sequence, and refining the content. You can use the timeline to select specific portions of your videos and add them to your workspace.";
-  } else if (query.toLowerCase().includes("segment")) {
-    text += "To create segments, use the arrow markers on the video timeline to select start and end points, then click 'Add Segment' to add them to your workspace.";
-  } else {
-    text += "This is a general AI response. I am ready to assist with your video editing tasks!";
-  }
-   const aiResponse: ChatMessage = {
-    id: `ai_msg_${Date.now()}`,
+    console.log(`[geminiService] General chat query: "${query}"`);
+    const model = genAI.getGenerativeModel({ model: MODEL });
+    
+    try {
+        const result = await model.generateContent(query);
+        const response = await result.response;
+        const responseText = response.text();
+        
+        return {
+            id: `ai_general_${Date.now()}`,
     sender: 'ai',
-    text: text,
+            text: responseText,
+            timestamp: Date.now(),
   };
-  return simulateApiCall(aiResponse, 700);
+    } catch (err) {
+        console.error('[geminiService] Error in general chat:', err);
+        throw err;
+    }
 };
 
 // Helper to format time for display
