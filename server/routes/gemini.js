@@ -1,78 +1,87 @@
 import express from 'express';
 import fetch from 'node-fetch';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { VertexAI } from '@google-cloud/vertexai';
+import { execFile } from 'child_process';
+import path from 'path';
+import fs from 'fs';
 
 const router = express.Router();
-// Use the same API key as test.js
-const GEMINI_API_KEY = 'AIzaSyDeonumAfAITWCRRiSR8GlTG4KPjF6YTIk';
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const MODEL = 'gemini-2.0-flash';
+const CREDENTIALS_PATH = path.resolve('credentials.json');
+const credsJson = JSON.parse(fs.readFileSync(CREDENTIALS_PATH,'utf8'));
+const vertex = new VertexAI({ project: credsJson.project_id, location: 'global', credentials: credsJson });
+const MODEL = 'gemini-2.5-flash-preview-05-20';
 
 let conversationContext = '';
 
 const VIDEO_URLS = {
-  sample2: 'https://storage.googleapis.com/gopro_videos/sample2.mp4',
-  sample3: 'https://storage.googleapis.com/gopro_videos/sample3.mp4',
-  sample4: 'https://storage.googleapis.com/gopro_videos/sample4.mp4',
-  sample5: 'https://storage.googleapis.com/gopro_videos/sample5.mp4'
+  sample2: 'https://storage.googleapis.com/gopro_videos/sample2.mp4'
 };
+
+const VIDEO_INFO = [
+  { id: 'sample2', title: 'GoPro Sample 2', url: VIDEO_URLS.sample2, duration: 15.81 },
+  { id: 'sample3', title: 'GoPro Sample 3', url: VIDEO_URLS.sample3, duration: 20.95 },
+  { id: 'sample4', title: 'GoPro Sample 4', url: VIDEO_URLS.sample4, duration: 18.43 },
+  { id: 'sample5', title: 'GoPro Sample 5', url: VIDEO_URLS.sample5, duration: 1.96 },
+];
+
+// Cache for already downloaded & encoded videos { url: base64 }
+const videoCache = new Map();
 
 // Health check endpoint
 router.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
+// General chat endpoint (no video)
+router.post('/general-chat', async (req, res) => {
+  // We ignore messageText for now; vertex_test.py already contains the prompt.
+
+  const scriptPath = path.resolve(process.cwd(), 'vertex_test.py');
+
+  console.log('[Gemini Backend] Spawning Vertex test script…');
+
+  execFile('python3', [scriptPath, '--json'], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    if (err) {
+      console.error('[Gemini Backend] vertex_test.py error:', err);
+      console.error(stderr);
+      return res.status(500).json({ error: err.message || 'Python error' });
+    }
+
+    let parsed;
+    try {
+      parsed = JSON.parse(stdout.trim());
+    } catch (e) {
+      console.warn('[Gemini Backend] Failed to parse JSON from python stdout');
+      return res.status(500).json({ error: 'Invalid JSON from vertex_test', raw: stdout });
+    }
+
+    res.json({ snippets: parsed });
+  });
+});
+
 router.post('/analyze-video', async (req, res) => {
   const { videoUrl, messageText, videoId } = req.body;
-  
   if (!videoUrl || !messageText) {
     return res.status(400).json({ error: 'Missing videoUrl or messageText' });
   }
 
   try {
-    // Fetch and encode video
-    console.log('[Gemini Backend] Fetching video:', videoUrl);
-    const response = await fetch(videoUrl);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch video: ${response.statusText}`);
-    }
-    
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Video = buffer.toString('base64');
-    console.log('[Gemini Backend] Video fetched and encoded, length:', base64Video.length);
-
-    // Update conversation context
-    conversationContext += `\nUser: ${messageText}`;
-    const prompt = `
-You are having a conversation about a video. You will receive a video [VIDEO_1].
-
-Previous conversation context:
-${conversationContext}
-
-Please analyze the video and respond to the latest message. Keep your response natural and conversational.
-If the user asks about specific timestamps or segments, include them in your response.
-`;
-
-    // Call Gemini
-    const model = genAI.getGenerativeModel({ model: MODEL });
-    console.log('[Gemini Backend] Sending request to Gemini...');
-    
-    const result = await model.generateContent([
+    const prompt = `You will receive a tagged video [VIDEO_1].\nRespond in natural language to the user's request.`;
+    const parts = [
       { text: prompt },
-      {
-        inlineData: {
-          mimeType: 'video/mp4',
-          data: base64Video,
-        },
-      },
-    ]);
+      { text: '[VIDEO_1]' },
+      { fileData: { mimeType: 'video/mp4', fileUri: videoUrl } },
+    ];
 
-    const responseText = result.response.text();
-    conversationContext += `\nAssistant: ${responseText}`;
-    console.log('[Gemini Backend] Received response from Gemini');
-    
-    res.json({ text: responseText });
+    console.log('[Gemini Backend] analyze-video request via Vertex');
+    const [resp] = await vertex.previewServiceClient.generateContent({
+      model: MODEL,
+      contents: [{ role: 'user', parts }],
+      generationConfig: { temperature: 0.3 },
+    });
+
+    const text = resp.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    res.json({ text });
   } catch (err) {
     console.error('[Gemini Backend] Error:', err);
     res.status(500).json({ error: err.message || 'Internal server error' });

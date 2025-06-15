@@ -1,138 +1,150 @@
 // test/test.js
 
+import fs from 'fs';
+import path from 'path';
 import fetch from 'node-fetch';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import Ajv from 'ajv';
 
-// ——— CONFIG ———
-const GEMINI_API_KEY = 'AIzaSyDeonumAfAITWCRRiSR8GlTG4KPjF6YTIk';
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const MODEL = 'gemini-2.0-flash';
+/* --------------------------- CONFIG ---------------------------------- */
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || 'AIzaSyDeonumAfAITWCRRiSR8GlTG4KPjF6YTIk';
+const MODEL = 'gemini-2.5-flash-preview-05-20';
 
-// Sample video URLs
-export const VIDEO_URLS = {
-  sample2: 'https://storage.googleapis.com/gopro_videos/sample2.mp4',
-  sample3: 'https://storage.googleapis.com/gopro_videos/sample3.mp4',
-  sample4: 'https://storage.googleapis.com/gopro_videos/sample4.mp4',
-  sample5: 'https://storage.googleapis.com/gopro_videos/sample5.mp4'
+// Videos you want analysed (tag, gs:// or https:// URI)
+const GS_VIDEOS = [
+  ['2', 'https://storage.googleapis.com/gopro_videos/sample2.mp4'],
+  ['3', 'https://storage.googleapis.com/gopro_videos/sample3.mp4'],
+  ['4', 'https://storage.googleapis.com/gopro_videos/sample4.mp4'],
+];
+
+const PROMPT = `You will receive several tagged videos [VIDEO_1] [VIDEO_2] [VIDEO_3].\n\nProduce ONE JSON array.  Each element must be:\n  {\n    "video_id": "VIDEO_1",        // the tag\n    "start":    "HH:MM:SS",       // two-digit hours, minutes, seconds\n    "end":      "HH:MM:SS|null",  // may be null\n    "description": "visual summary for that slice"\n  }\n\n• Interleave snippets from different videos in chronological or logical order.\n• 3-4 snippets per video (≤10 total).\n• NO ranges like 00:00-00:05, no decimals, no extra keys, no prose outside JSON.`;
+
+const TIME_RE = '^\\d{2}:\\d{2}:\\d{2}$';
+const SCHEMA = {
+  type: 'array',
+  items: {
+    type: 'object',
+    properties: {
+      video_id: { type: 'string' },
+      start: { type: 'string', pattern: TIME_RE },
+      end: { type: 'string', pattern: TIME_RE },
+      description: { type: 'string' },
+    },
+    required: ['video_id', 'start', 'end', 'description'],
+  },
 };
+/* --------------------------------------------------------------------- */
 
-// Node.js-compatible function to fetch and encode video data
-async function getVideoData(url) {
-  try {
-    console.log('[getVideoData] fetching', url);
-    const response = await fetch(url);
-    console.log('[getVideoData] fetch response.ok =', response.ok);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch video: ${response.statusText}`);
-    }
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64data = buffer.toString('base64');
-    console.log('[getVideoData] returning base64data of length', base64data.length);
-    return base64data;
-  } catch (error) {
-    console.error('Error fetching video:', error);
-    throw error;
-  }
+const CACHE_DIR = path.resolve('.cache_videos');
+if (!fs.existsSync(CACHE_DIR)) {
+  fs.mkdirSync(CACHE_DIR, { recursive: true });
 }
 
-let conversationContext = '';
+function cachePathFor(uri) {
+  const hash = Buffer.from(uri).toString('base64').replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+  return path.join(CACHE_DIR, `${hash}.b64`);
+}
 
-// Main analysis function that integrates with the existing chat system
-export async function analyzeVideoContent(videoId, messageText, videoUrl) {
+function sanitise(txt) {
+  // Remove trailing commas and fix malformed times
+  return txt
+    .trim()
+    .replace(/,\s*([}\]])/g, '$1')
+    .replace(/"(start|end)"\s*:\s*"(\d{2}:\d{2}:\d{2})[^\"]*"/g, '"$1":"$2"')
+    .replace(/"end"\s*:\s*null/g, '"end":"00:00:00"');
+}
+
+// Helper: convert gs://bucket/path to public https URL (works for publicly readable objects)
+function gsToHttps(gsUri) {
+  const match = gsUri.match(/^gs:\/\/([^\/]+)\/(.+)$/);
+  if (!match) return gsUri;
+  const [, bucket, object] = match;
+  // Encode each path component to preserve spaces and parentheses
+  const encodedObject = object.split('/').map(encodeURIComponent).join('/');
+  return `https://storage.googleapis.com/${bucket}/${encodedObject}`;
+}
+
+async function getVideoData(uri) {
+  throw new Error('getVideoData should not be called when using fileUri');
+}
+
+async function buildParts() {
+  const parts = [{ text: PROMPT }];
+  for (const [tag, uri] of GS_VIDEOS) {
+    parts.push({ text: `[VIDEO_${tag}]` });
+    parts.push({ fileData: { mimeType: 'video/mp4', fileUri: uri } });
+  }
+  return parts;
+}
+
+async function run() {
+  if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('YOUR_GEMINI_KEY_HERE')) {
+    console.error('❌  Set GEMINI_API_KEY environment variable first');
+    process.exit(1);
+  }
+
+  const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+  const model = genAI.getGenerativeModel({ model: MODEL });
+
+  console.log('▶  Sending request to Gemini …');
+  const result = await model.generateContent({
+    contents: [{ role: 'user', parts: await buildParts() }],
+    generationConfig: {
+      temperature: 0.3,
+      maxOutputTokens: 4096,
+      responseMimeType: 'application/json',
+    },
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+    ],
+  });
+
+  let raw = result.response.text();
+  console.log('\n--- RAW Gemini output (before sanitise) ---\n');
+  console.log(raw);
+  console.log('\n--- End RAW ---\n');
+  raw = sanitise(raw);
+  console.log('\n--- Sanitised output ---\n');
+  console.log(raw);
+  console.log('\n--- End Sanitised ---\n');
+
+  let snippets;
   try {
-    console.log('[analyzeVideoContent] called with', { videoId, messageText, videoUrl });
-    console.log('Starting video analysis...');
-    console.log('Video URL:', videoUrl);
-    console.log('Message:', messageText);
-    
-    const videoData = await getVideoData(videoUrl);
-    console.log('Video data fetched successfully, length:', videoData.length);
-
-    const model = genAI.getGenerativeModel({ model: MODEL });
-    
-    // Update conversation context with user's message
-    conversationContext += `\nUser: ${messageText}`;
-    
-    const prompt = `
-You are having a conversation about a video. You will receive a video [VIDEO_1].
-
-Previous conversation context:
-${conversationContext}
-
-Please analyze the video and respond to the latest message. Keep your response natural and conversational.
-If the user asks about specific timestamps or segments, include them in your response.
-`;
-
-    console.log('Sending request to Gemini...');
-    const result = await model.generateContent([
-      { text: prompt },
-      { text: '[VIDEO_1]' },
-      { 
-        inlineData: {
-          mimeType: 'video/mp4',
-          data: videoData
-        }
-      }
-    ]);
-
-    const response = await result.response;
-    const responseText = response.text();
-    
-    // Update conversation context with AI's response
-    conversationContext += `\nAssistant: ${responseText}`;
-    
-    console.log('Received response from Gemini');
-    
-    // Format the response as a ChatMessage
-    return {
-      role: 'assistant',
-      content: responseText,
-      timestamp: new Date().toISOString(),
-    };
-    
+    snippets = JSON.parse(raw);
   } catch (err) {
-    console.error('Error during video analysis:', err);
-    if (err.response) {
-      console.error('Response text:', err.response.text());
+    console.warn('⚠️  JSON parse failed, attempting fallback:', err.message);
+    // Last-ditch: wrap in [] if missing
+    try {
+      snippets = JSON.parse(`[${raw}]`);
+    } catch (e2) {
+      console.error('❌ Could not parse Gemini output');
+      console.error(raw);
+      process.exit(1);
     }
-    throw err;
+  }
+
+  // Validate against schema using ajv
+  const ajv = new Ajv({ strict: false });
+  const validate = ajv.compile(SCHEMA);
+  if (!validate(snippets)) {
+    console.warn('⚠️  Gemini output fails schema validation:', validate.errors);
+  }
+
+  // Pretty print
+  console.log('\n— Gemini Snippets —');
+  for (const sn of snippets) {
+    const vid = sn.video_id;
+    const start = sn.start;
+    const end = sn.end ?? '…';
+    console.log(`${vid}  🕒 ${start} – ${end}: ${sn.description}`);
   }
 }
 
-// Reset conversation context
-export function resetConversation() {
-  conversationContext = '';
-}
-
-// Export video URLs for use in other parts of the application
-export const getVideoUrls = () => VIDEO_URLS;
-
-console.log('test.js script started');
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+run().catch((err) => {
+  console.error('❌  Unhandled error:', err);
+  process.exit(1);
 });
-
-// Always run the test block for debugging
-(async () => {
-  try {
-    const testAnalysis = async () => {
-      console.log('Running testAnalysis...');
-      try {
-        console.log('About to call analyzeVideoContent...');
-        const result = await analyzeVideoContent('sample2', 'What is the main subject or focus of this video?', VIDEO_URLS.sample2);
-        console.log('Returned from analyzeVideoContent');
-        console.log('\nVideo Analysis Result:');
-        console.log(result);
-      } catch (error) {
-        console.error('Test analysis failed:', error);
-      }
-      console.log('testAnalysis complete.');
-    };
-    await testAnalysis();
-  } catch (err) {
-    console.error('Top-level error:', err);
-  }
-})();
 

@@ -5,7 +5,6 @@ import { WorkspaceView } from './components/WorkspaceView';
 import { SourceVideoView } from './components/SourceVideoView';
 // MOCK_VIDEO_SOURCES and MOCK_WORKSPACE_SEGMENTS are no longer used for initial state
 // import { MOCK_VIDEO_SOURCES, MOCK_WORKSPACE_SEGMENTS } from './services/mockData';
-import * as GeminiService from './src/services/geminiService';
 import { SearchIcon, CloseIcon, WorkspaceIcon, VideoIcon, ChatIcon, LinkIcon, WarningIcon, FolderOpenIcon, PlusIcon as UploadIcon, MoreHorizontalIcon, ChevronRightIcon as ViewAllIcon } from './components/Icons';
 import { Button } from './components/Button';
 import { LoadingSpinner } from './components/LoadingSpinner';
@@ -169,6 +168,13 @@ const CORRECT_VIDEO_SOURCES_DATA = [
   { id: 'sample5', title: 'GoPro Sample 5', url: 'https://storage.googleapis.com/gopro_videos/sample5.mp4' }
 ];
 
+// Map Gemini tag names to our video IDs (update if backend changes order)
+const GEMINI_VIDEO_TAG_MAP: Record<string, string> = {
+  'VIDEO_1': 'sample2',
+  'VIDEO_2': 'sample3',
+  'VIDEO_3': 'sample4',
+};
+
 // --- Main App ---
 const App: React.FC = () => {
   const [tabs, setTabs] = useState<TabDefinition[]>([INITIAL_WORKSPACE_TAB]);
@@ -218,7 +224,7 @@ const App: React.FC = () => {
       console.log('[App:loadInitialVideos] Initial videos loaded from GCS URLs:', videos);
     } catch (err) {
       console.error('[App:loadInitialVideos] Error loading initial videos:', err);
-    }
+        }
   };
 
   useEffect(() => {
@@ -421,76 +427,119 @@ const App: React.FC = () => {
     const lowerMessageText = messageText.toLowerCase();
     let videoToAnalyze: VideoSource | undefined = undefined;
 
-    // First check if the message explicitly mentions a video by title
+    // Determine if any video is referenced in the message (flexible matching)
     for (const video of userUploadedVideos) {
-        if (video.title && lowerMessageText.includes(video.title.toLowerCase())) {
-            videoToAnalyze = video;
-            break;
+        const titleLc = (video.title || '').toLowerCase();
+        const idLc = video.id.toLowerCase();
+        const simplifiedTitle = titleLc.replace(/gopro|video|sample/gi, '').replace(/\s+/g, ' ').trim();
+
+        // Build a set of possible keys to match
+        const possibleKeys = new Set<string>();
+        possibleKeys.add(titleLc);
+        possibleKeys.add(idLc);
+        if (simplifiedTitle) possibleKeys.add(simplifiedTitle);
+        // e.g. "sample 5" from title
+        const sampleMatch = idLc.match(/sample(\d+)/);
+        if (sampleMatch) {
+            possibleKeys.add(`sample ${sampleMatch[1]}`);
+            possibleKeys.add(`sample${sampleMatch[1]}`);
         }
+        for (const key of possibleKeys) {
+            if (lowerMessageText.includes(key)) {
+                videoToAnalyze = video;
+                break;
+            }
+        }
+        if (videoToAnalyze) break;
     }
 
-    if (!videoToAnalyze) {
-        const availableVideos = userUploadedVideos.map(v => `"${v.title}"`).join(', ');
-        setGlobalChatHistory(prev => [...prev, {
-            id: `ai_err_novideo_${Date.now()}`,
-            sender: 'ai',
-            text: `Please mention which video you would like me to analyze. Available videos: ${availableVideos}.`
-        }]);
-        setIsGlobalChatLoading(false);
-        return;
+    let aiEndpoint = '';
+    let requestBody: any = {};
+
+    if (videoToAnalyze) {
+        // Analyze specific video
+        aiEndpoint = 'http://localhost:5000/api/gemini/analyze-video';
+        requestBody = {
+          videoUrl: videoToAnalyze.url,
+          messageText,
+          videoId: videoToAnalyze.id,
+        };
+    } else {
+        // General chat without video context
+        aiEndpoint = 'http://localhost:5000/api/gemini/general-chat';
+        requestBody = { messageText };
     }
 
     try {
-        console.log(`[App:handleSendGlobalChatMessage] Analyzing video: ${videoToAnalyze.title} (ID: ${videoToAnalyze.id})`);
-        
         const loadingMessage: ChatMessage = {
             id: `ai_loading_${Date.now()}`,
             sender: 'ai',
-            text: `Analyzing "${videoToAnalyze.title}"... This may take a moment.`
+            text: videoToAnalyze ? `Analyzing "${videoToAnalyze.title}"... This may take a moment.` : 'Thinking...'
         };
         setGlobalChatHistory(prev => [...prev, loadingMessage]);
 
-        const response = await fetch('http://localhost:5000/api/gemini/analyze-video', {
+        const response = await fetch(aiEndpoint, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                videoUrl: videoToAnalyze.url,
-                messageText: messageText,
-                videoId: videoToAnalyze.id
-            })
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody),
         });
 
         if (!response.ok) {
             throw new Error(`Backend API error: ${response.statusText}`);
         }
-
         const data = await response.json();
-        
-        // Remove loading message and add AI response
-        setGlobalChatHistory(prev => 
-            prev.filter(msg => msg.id !== loadingMessage.id).concat({
-                id: `ai_${Date.now()}`,
-                sender: 'ai',
-                text: data.text
-            })
-        );
+        const rawOutput = data.raw || data.text || '';
+        console.log('[GlobalChat] RAW Gemini output:', rawOutput);
+
+        // Clean rawOutput by removing ``` fences if present
+        let cleanJson = rawOutput.trim();
+        if (cleanJson.startsWith('```')) {
+          cleanJson = cleanJson.replace(/^```[a-zA-Z]*\n?/, '').replace(/```\s*$/, '');
+        }
+
+        // Try to parse snippets and open tabs
+        let parsed: any = null;
+        try {
+          parsed = JSON.parse(cleanJson);
+        } catch(e) {
+          console.warn('Failed to parse Gemini JSON snippets');
+        }
+
+        if (Array.isArray(parsed)) {
+          parsed.forEach((snippet: any) => {
+            const mappedId = GEMINI_VIDEO_TAG_MAP[snippet.video_id] || snippet.video_id;
+            const video = userUploadedVideos.find(v => v.id === mappedId || v.title.toLowerCase().includes(mappedId.toLowerCase()));
+            if (video && snippet.start) {
+              const [hh, mm, ss] = snippet.start.split(':').map((n: string)=>parseInt(n,10));
+              const startSec = hh*3600 + mm*60 + ss;
+              let endSec = startSec;
+              if (snippet.end) {
+                const [eh, em, es] = snippet.end.split(':').map((n: string)=>parseInt(n,10));
+                endSec = eh*3600 + em*60 + es;
+              }
+              openVideoSourceTab(video, {start: startSec, end: endSec});
+            }
+          });
+        }
+
+        const messageTextForChat = rawOutput.startsWith('```') ? rawOutput : '```json\n' + rawOutput + '\n```';
+
+        setGlobalChatHistory(prev => prev.filter(msg => msg.id !== loadingMessage.id).concat({
+          id: `ai_${Date.now()}`,
+          sender: 'ai',
+          text: messageTextForChat,
+        }));
     } catch (error) {
         console.error('[App:handleSendGlobalChatMessage] Error:', error);
-        
-        // Remove loading message and add error message
-        setGlobalChatHistory(prev => 
-            prev.filter(msg => msg.id.includes('ai_loading_')).concat({
-                id: `ai_err_${Date.now()}`,
-                sender: 'ai',
-                text: 'There was an issue communicating with the AI service. Please try again.'
-            })
-        );
+        setGlobalChatHistory(prev => prev.filter(msg => !msg.id.includes('ai_loading_')).concat({
+            id: `ai_err_${Date.now()}`,
+            sender: 'ai',
+            text: 'There was an issue communicating with the AI service. Please try again.'
+        }));
     } finally {
         setIsGlobalChatLoading(false);
     }
-};
+  };
 
   const handleSendVideoChatMessage = async (videoId: string, messageText: string) => {
     const userMessage: ChatMessage = { 
@@ -499,8 +548,8 @@ const App: React.FC = () => {
         text: messageText 
     };
     setVideoChatHistories(prev => ({
-        ...prev,
-        [videoId]: [...(prev[videoId] || []), userMessage]
+      ...prev,
+      [videoId]: [...(prev[videoId] || []), userMessage]
     }));
     setIsVideoChatLoading(prev => ({ ...prev, [videoId]: true }));
 
@@ -552,30 +601,30 @@ const App: React.FC = () => {
         const data = await response.json();
         
         // Remove loading message and add AI response
-        setVideoChatHistories(prev => ({
-            ...prev,
+      setVideoChatHistories(prev => ({
+        ...prev,
             [videoId]: [...(prev[videoId] || []).filter(msg => msg.id !== loadingMessage.id), {
                 id: `ai_${videoId}_${Date.now()}`,
                 sender: 'ai',
                 text: data.text
             }]
-        }));
+      }));
     } catch (error) {
         console.error('[App:handleSendVideoChatMessage] Error:', error);
         
         // Remove loading message and add error message
-        setVideoChatHistories(prev => ({
-            ...prev,
+       setVideoChatHistories(prev => ({
+        ...prev,
             [videoId]: [...(prev[videoId] || []).filter(msg => !msg.id.includes('ai_loading_')), {
                 id: `ai_err_${videoId}_${Date.now()}`,
                 sender: 'ai',
                 text: 'There was an issue communicating with the AI service. Please try again.'
             }]
-        }));
+      }));
     } finally {
-        setIsVideoChatLoading(prev => ({ ...prev, [videoId]: false }));
+      setIsVideoChatLoading(prev => ({ ...prev, [videoId]: false }));
     }
-};
+  };
   
   const handleVideoDurationKnown = useCallback((videoId: string, newDuration: number) => {
     setUserUploadedVideos(prevVideos => {
