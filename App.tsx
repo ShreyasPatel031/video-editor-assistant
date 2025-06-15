@@ -160,19 +160,32 @@ const TabBar: React.FC<TabBarProps> = ({ tabs, activeTabId, onSelectTab, onClose
   );
 };
 
-// Correct video URLs from test.js
-const CORRECT_VIDEO_SOURCES_DATA = [
-  { id: 'sample2', title: 'GoPro Sample 2', url: 'https://storage.googleapis.com/gopro_videos/sample2.mp4' },
-  { id: 'sample3', title: 'GoPro Sample 3', url: 'https://storage.googleapis.com/gopro_videos/sample3.mp4' },
-  { id: 'sample4', title: 'GoPro Sample 4', url: 'https://storage.googleapis.com/gopro_videos/sample4.mp4' },
-  { id: 'sample5', title: 'GoPro Sample 5', url: 'https://storage.googleapis.com/gopro_videos/sample5.mp4' }
-];
+// Canonical mapping of the nine GoPro_Sample_X identifiers to their public
+// Cloud-Storage URLs.  We no longer bundle large video binaries in the repo –
+// each entry here points straight to a file served from
+// https://storage.googleapis.com/gopro_videos/GoPro_Sample_X.mp4 so the
+// player, embedding search, and Gemini routes all reference exactly the same
+// remote asset without bloating the repository size.
+const CORRECT_VIDEO_SOURCES_DATA: { id: string; title: string; url: string }[] = Array.from({ length: 9 }, (_, i) => {
+  const num = i + 1;
+  return {
+    id: `GoPro_Sample_${num}`,
+    title: `GoPro Sample ${num}`,
+    url: `https://storage.googleapis.com/gopro_videos/GoPro_Sample_${num}.mp4`,
+  };
+});
 
-// Map Gemini tag names to our video IDs (update if backend changes order)
+// Identity map – embed results already emit GoPro_Sample_N ids
 const GEMINI_VIDEO_TAG_MAP: Record<string, string> = {
-  'VIDEO_1': 'sample2',
-  'VIDEO_2': 'sample3',
-  'VIDEO_3': 'sample4',
+  'VIDEO_1': 'GoPro_Sample_1',
+  'VIDEO_2': 'GoPro_Sample_2',
+  'VIDEO_3': 'GoPro_Sample_3',
+  'VIDEO_4': 'GoPro_Sample_4',
+  'VIDEO_5': 'GoPro_Sample_5',
+  'VIDEO_6': 'GoPro_Sample_6',
+  'VIDEO_7': 'GoPro_Sample_7',
+  'VIDEO_8': 'GoPro_Sample_8',
+  'VIDEO_9': 'GoPro_Sample_9',
 };
 
 // --- Main App ---
@@ -191,40 +204,15 @@ const App: React.FC = () => {
   const [isVideoChatLoading, setIsVideoChatLoading] = useState<Record<string, boolean>>({});
   const [apiKeyStatus, setApiKeyStatus] = useState<'checking' | 'valid' | 'missing'>('checking');
 
-  const loadInitialVideos = async () => {
-    try {
-      const videos = CORRECT_VIDEO_SOURCES_DATA.map(video => ({
-        ...video,
-        thumbnailUrl: `https://picsum.photos/seed/${video.id}/160/90`,
-        duration: 0
-      }));
-
-      // Load durations for each video
-      for (const video of videos) {
-        try {
-          const tempVideo = document.createElement('video');
-          tempVideo.src = video.url;
-          await new Promise((resolve, reject) => {
-            tempVideo.onloadedmetadata = () => {
-              video.duration = tempVideo.duration;
-              console.log(`[App:loadInitialVideos] Got duration for ${video.title}: ${video.duration}`);
-              resolve(null);
-            };
-            tempVideo.onerror = (err) => {
-              console.error(`[App:loadInitialVideos] Error getting duration for: ${video.title}`, err);
-              reject(err);
-            };
-          });
-        } catch (err) {
-          console.error(`[App:loadInitialVideos] Error loading video: ${video.title}`, err);
-        }
-      }
-
-      setUserUploadedVideos(videos);
-      console.log('[App:loadInitialVideos] Initial videos loaded from GCS URLs:', videos);
-    } catch (err) {
-      console.error('[App:loadInitialVideos] Error loading initial videos:', err);
-        }
+  const loadInitialVideos = () => {
+    // No duration probes to avoid 404 noise; durations set to 0.
+    const videos = CORRECT_VIDEO_SOURCES_DATA.map((v) => ({
+      ...v,
+      thumbnailUrl: `https://picsum.photos/seed/${v.id}/160/90`,
+      duration: 0,
+    }));
+    setUserUploadedVideos(videos);
+    console.log('[App] Loaded static video list for embedding search:', videos);
   };
 
   useEffect(() => {
@@ -416,13 +404,46 @@ const App: React.FC = () => {
   };
 
   const handleSendGlobalChatMessage = async (messageText: string) => {
-    const userMessage: ChatMessage = { 
-        id: `user_global_${Date.now()}`, 
-        sender: 'user', 
-        text: messageText
+    const userMessage: ChatMessage = {
+      id: `user_global_${Date.now()}`,
+      sender: 'user',
+      text: messageText,
     };
-    setGlobalChatHistory(prev => [...prev, userMessage]);
+    setGlobalChatHistory((prev) => [...prev, userMessage]);
     setIsGlobalChatLoading(true);
+
+    /* -------------------------------------------------------------
+       1) Try fast embedding-only search first
+    ------------------------------------------------------------- */
+    try {
+      const embedResp = await fetch('http://localhost:5000/api/gemini/embed-search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queryText: messageText, topN: 5 }),
+      });
+
+      if (embedResp.ok) {
+        const embedData = await embedResp.json();
+        if (embedData && Array.isArray(embedData.results) && embedData.results.length > 0) {
+          // Open each result in a tab and also show brief list.
+          embedData.results.forEach((res: any) => {
+            const vid = userUploadedVideos.find((v) => v.id === res.video_id);
+            if (vid) {
+              const start = (res.chunk_number - 1) * 10;
+              openVideoSourceTab(vid, { start, end: start + 10 });
+            }
+          });
+
+          const asMarkdown = '```json\n' + JSON.stringify(embedData.results, null, 2) + '\n```';
+          setGlobalChatHistory((prev) => [...prev, { id: `ai_embed_${Date.now()}`, sender: 'ai', text: asMarkdown }]);
+          setIsGlobalChatLoading(false);
+          return; // skip Gemini fallback
+        }
+      }
+    } catch (e) {
+      console.warn('[GlobalChat] Embed search failed, falling back to Gemini:', e);
+      // continue to Gemini path
+    }
 
     const lowerMessageText = messageText.toLowerCase();
     let videoToAnalyze: VideoSource | undefined = undefined;
@@ -488,7 +509,11 @@ const App: React.FC = () => {
             throw new Error(`Backend API error: ${response.statusText}`);
         }
         const data = await response.json();
-        const rawOutput = data.raw || data.text || '';
+        // Accept various response shapes: {raw}, {text}, or {snippets: []}
+        let rawOutput: string = data.raw || data.text || '';
+        if (!rawOutput && Array.isArray(data.snippets)) {
+          rawOutput = JSON.stringify(data.snippets, null, 2);
+        }
         console.log('[GlobalChat] RAW Gemini output:', rawOutput);
 
         // Clean rawOutput by removing ``` fences if present

@@ -260,9 +260,14 @@ Respond to the user's message.
 
 // Update VIDEO_URLS to reflect the correct GCS URLs from test.js
 export const VIDEO_URLS: Record<string, string> = {
-    'sample1': 'https://storage.googleapis.com/gopro_videos/sample1.mp4',
-    'sample2': 'https://storage.googleapis.com/gopro_videos/sample2.mp4',
-    'sample3': 'https://storage.googleapis.com/gopro_videos/sample3.mp4',
-    'sample4': 'https://storage.googleapis.com/gopro_videos/sample4.mp4',
-    'sample5': 'https://storage.googleapis.com/gopro_videos/sample5.mp4'
+    // Canonical public URLs for the nine analysed GoPro samples
+    'GoPro_Sample_1': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_1.mp4',
+    'GoPro_Sample_2': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_2.mp4',
+    'GoPro_Sample_3': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_3.mp4',
+    'GoPro_Sample_4': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_4.mp4',
+    'GoPro_Sample_5': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_5.mp4',
+    'GoPro_Sample_6': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_6.mp4',
+    'GoPro_Sample_7': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_7.mp4',
+    'GoPro_Sample_8': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_8.mp4',
+    'GoPro_Sample_9': 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_9.mp4'
 }; 

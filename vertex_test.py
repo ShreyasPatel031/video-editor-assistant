@@ -116,7 +116,7 @@ def main() -> None:
 
     cfg = types.GenerateContentConfig(
         temperature=0.3,
-        max_output_tokens=4096,
+        max_output_tokens=512,
         response_mime_type="application/json",
         response_schema=SCHEMA,  # type: ignore
         safety_settings=[
@@ -130,31 +130,38 @@ def main() -> None:
         ],
     )
 
-    # Stream the response so we can capture latency to first token, etc.
-    if not json_only:
-        print("▶  Sending request to Vertex Gemini …", flush=True)
+    # Decide whether to stream or request full response based on json_only flag
+    if json_only:
+        # In JSON-only mode we skip streaming to avoid partial outputs that break parsing
+        if not json_only:
+            print("▶  Sending request to Vertex Gemini (non-stream)…", flush=True)
 
-    chunks = client.models.generate_content_stream(model=MODEL, contents=build_request(), config=cfg)
+        response = client.models.generate_content(model=MODEL, contents=build_request(), config=cfg)
+        raw = sanitise(response.text or "")
+    else:
+        # Stream the response so we can capture latency to first token, etc.
+        print("▶  Sending request to Vertex Gemini (stream)…", flush=True)
 
-    raw_parts: list[str] = []
-    for ck in chunks:
-        if ck.text:
-            raw_parts.append(ck.text)
-    raw = "".join(raw_parts)
+        chunks = client.models.generate_content_stream(model=MODEL, contents=build_request(), config=cfg)
+        raw_parts: list[str] = []
+        for ck in chunks:
+            if ck.text:
+                raw_parts.append(ck.text)
+        raw = "".join(raw_parts)
 
-    elapsed = time.time() - start_time
-    if not json_only:
+        elapsed = time.time() - start_time
         print(f"⏱️  Latency (wall): {elapsed:.2f}s\n")
 
     raw = sanitise(raw)
     try:
         snippets = json.loads(raw)
-    except json.JSONDecodeError:
-        print("⚠️  JSON decode failed – fetching non-stream result…")
-        raw = sanitise(
-            client.models.generate_content(model=MODEL, contents=build_request(), config=cfg).text or ""
-        )
-        snippets = json.loads(raw)
+    except json.JSONDecodeError as ex:
+        print("⚠️  JSON decode failed even after sanitation:", ex)
+        snippets = []  # Return empty list to avoid crashing callers
+
+    if json_only:
+        print(json.dumps(snippets, ensure_ascii=False))
+        return
 
     # Pretty print result
     print("— Gemini Snippets —")
@@ -163,12 +170,6 @@ def main() -> None:
         start = sn["start"]
         end = sn.get("end", "…")
         print(f"{vid}  🕒 {start} – {end}: {sn['description']}")
-
-    if json_only:
-        # JSON already printed; nothing else
-        return
-    else:
-        print(json.dumps(snippets, ensure_ascii=False))
 
 
 if __name__ == "__main__":

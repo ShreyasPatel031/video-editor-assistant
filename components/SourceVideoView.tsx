@@ -73,7 +73,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             videoRef.current.currentTime = currentTime;
         }
     }
-  },[video.url, video.duration, currentTime, video.id, actualVideoDuration]);
+  }, [video.url, video.duration, currentTime, video.id]);
 
   useEffect(() => {
     const videoElement = videoRef.current;
@@ -371,13 +371,13 @@ export const SourceVideoView: React.FC<SourceVideoViewProps> = ({
     }
   }, [actualVideoDuration, selectedStartTime, selectedEndTime]);
 
-  const handleTimeUpdate = (time: number) => {
+  const handleTimeUpdate = useCallback((time: number) => {
     setCurrentTime(time);
-  };
+  }, []);
 
-  const handlePlayPauseToggle = () => {
+  const handlePlayPauseToggle = useCallback(() => {
     setIsPlaying(prev => !prev);
-  };
+  }, []);
 
   const handleSelectedTimeChange = (type: 'start' | 'end', time: number) => {
     if (type === 'start') {

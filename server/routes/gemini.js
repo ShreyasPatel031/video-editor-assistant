@@ -14,14 +14,27 @@ const MODEL = 'gemini-2.5-flash-preview-05-20';
 let conversationContext = '';
 
 const VIDEO_URLS = {
-  sample2: 'https://storage.googleapis.com/gopro_videos/sample2.mp4'
+  GoPro_Sample_1: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_1.mp4',
+  GoPro_Sample_2: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_2.mp4',
+  GoPro_Sample_3: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_3.mp4',
+  GoPro_Sample_4: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_4.mp4',
+  GoPro_Sample_5: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_5.mp4',
+  GoPro_Sample_6: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_6.mp4',
+  GoPro_Sample_7: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_7.mp4',
+  GoPro_Sample_8: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_8.mp4',
+  GoPro_Sample_9: 'https://storage.googleapis.com/gopro_videos/GoPro_Sample_9.mp4'
 };
 
 const VIDEO_INFO = [
-  { id: 'sample2', title: 'GoPro Sample 2', url: VIDEO_URLS.sample2, duration: 15.81 },
-  { id: 'sample3', title: 'GoPro Sample 3', url: VIDEO_URLS.sample3, duration: 20.95 },
-  { id: 'sample4', title: 'GoPro Sample 4', url: VIDEO_URLS.sample4, duration: 18.43 },
-  { id: 'sample5', title: 'GoPro Sample 5', url: VIDEO_URLS.sample5, duration: 1.96 },
+  { id: 'GoPro_Sample_1', title: 'GoPro Sample 1', url: VIDEO_URLS.GoPro_Sample_1, duration: 10.0 },
+  { id: 'GoPro_Sample_2', title: 'GoPro Sample 2', url: VIDEO_URLS.GoPro_Sample_2, duration: 15.81 },
+  { id: 'GoPro_Sample_3', title: 'GoPro Sample 3', url: VIDEO_URLS.GoPro_Sample_3, duration: 20.95 },
+  { id: 'GoPro_Sample_4', title: 'GoPro Sample 4', url: VIDEO_URLS.GoPro_Sample_4, duration: 18.43 },
+  { id: 'GoPro_Sample_5', title: 'GoPro Sample 5', url: VIDEO_URLS.GoPro_Sample_5, duration: 1.96 },
+  { id: 'GoPro_Sample_6', title: 'GoPro Sample 6', url: VIDEO_URLS.GoPro_Sample_6, duration: 0 },
+  { id: 'GoPro_Sample_7', title: 'GoPro Sample 7', url: VIDEO_URLS.GoPro_Sample_7, duration: 0 },
+  { id: 'GoPro_Sample_8', title: 'GoPro Sample 8', url: VIDEO_URLS.GoPro_Sample_8, duration: 0 },
+  { id: 'GoPro_Sample_9', title: 'GoPro Sample 9', url: VIDEO_URLS.GoPro_Sample_9, duration: 0 },
 ];
 
 // Cache for already downloaded & encoded videos { url: base64 }
@@ -34,29 +47,26 @@ router.get('/health', (req, res) => {
 
 // General chat endpoint (no video)
 router.post('/general-chat', async (req, res) => {
-  // We ignore messageText for now; vertex_test.py already contains the prompt.
+  const { messageText } = req.body || {};
+  if (!messageText || typeof messageText !== 'string') {
+    return res.status(400).json({ error: 'Missing messageText' });
+  }
 
-  const scriptPath = path.resolve(process.cwd(), 'vertex_test.py');
+  try {
+    console.log('[Gemini Backend] general-chat → Vertex');
 
-  console.log('[Gemini Backend] Spawning Vertex test script…');
+    const generativeModel = vertex.preview.getGenerativeModel({ model: MODEL });
+    const resp = await generativeModel.generateContent({
+      contents: [{ role: 'user', parts: [{ text: messageText }] }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 512 },
+    });
 
-  execFile('python3', [scriptPath, '--json'], { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-    if (err) {
-      console.error('[Gemini Backend] vertex_test.py error:', err);
-      console.error(stderr);
-      return res.status(500).json({ error: err.message || 'Python error' });
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(stdout.trim());
-    } catch (e) {
-      console.warn('[Gemini Backend] Failed to parse JSON from python stdout');
-      return res.status(500).json({ error: 'Invalid JSON from vertex_test', raw: stdout });
-    }
-
-    res.json({ snippets: parsed });
-  });
+    const text = resp.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    res.json({ text });
+  } catch (err) {
+    console.error('[Gemini Backend] Error:', err);
+    res.status(500).json({ error: err.message || 'Internal server error' });
+  }
 });
 
 router.post('/analyze-video', async (req, res) => {
@@ -74,13 +84,13 @@ router.post('/analyze-video', async (req, res) => {
     ];
 
     console.log('[Gemini Backend] analyze-video request via Vertex');
-    const [resp] = await vertex.previewServiceClient.generateContent({
-      model: MODEL,
+    const generativeModel = vertex.preview.getGenerativeModel({ model: MODEL });
+    const resp = await generativeModel.generateContent({
       contents: [{ role: 'user', parts }],
       generationConfig: { temperature: 0.3 },
     });
 
-    const text = resp.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const text = resp.response?.candidates?.[0]?.content?.parts?.[0]?.text || '';
     res.json({ text });
   } catch (err) {
     console.error('[Gemini Backend] Error:', err);
@@ -92,6 +102,52 @@ router.post('/analyze-video', async (req, res) => {
 router.post('/reset', (req, res) => {
   conversationContext = '';
   res.json({ status: 'ok' });
+});
+
+// -----------------------------------------------------------------------------
+// Embedding-only search (quick_video_search.py)
+// -----------------------------------------------------------------------------
+
+router.post('/embed-search', async (req, res) => {
+  const { queryText, topN } = req.body || {};
+  if (!queryText || typeof queryText !== 'string') {
+    return res.status(400).json({ error: 'Missing queryText' });
+  }
+
+  const n = parseInt(topN, 10) > 0 ? parseInt(topN, 10) : 5;
+
+  const scriptPath = path.resolve(process.cwd(), 'Enhanced_GoPro_Search_System', 'quick_video_search.py');
+
+  console.log(`[EmbedSearch] Spawning quick_video_search.py for "${queryText}" (top ${n})`);
+
+  execFile(
+    'python3',
+    [scriptPath, queryText, String(n)],
+    { maxBuffer: 10 * 1024 * 1024 },
+    (err, stdout, stderr) => {
+      if (err) {
+        console.error('[EmbedSearch] Python error:', err);
+        console.error(stderr);
+        return res.status(500).json({ error: err.message || 'Python error' });
+      }
+
+      let parsed;
+      try {
+        // Extract JSON substring starting at first '{' and ending at last '}'
+        const txt = stdout.trim();
+        const first = txt.indexOf('{');
+        const last = txt.lastIndexOf('}');
+        if (first === -1 || last === -1) throw new Error('No JSON braces found');
+        const jsonStr = txt.substring(first, last + 1);
+        parsed = JSON.parse(jsonStr);
+      } catch (e) {
+        console.warn('[EmbedSearch] Failed to parse JSON from python stdout');
+        return res.status(500).json({ error: 'Invalid JSON from quick_video_search', raw: stdout });
+      }
+
+      res.json(parsed);
+    }
+  );
 });
 
 export default router; 
